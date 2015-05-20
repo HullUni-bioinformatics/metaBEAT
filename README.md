@@ -1,0 +1,2 @@
+# metaBEAT
+Metabarcoding analyses pipeline
