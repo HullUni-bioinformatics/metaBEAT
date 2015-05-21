@@ -9,12 +9,13 @@ RUN apt-get update -y -qq --fix-missing
 #RUN apt-get upgrade -y
 
 RUN mkdir /home/metabarcoding
-ENV PATH /home/metabarcoding:$PATH
+RUN mkdir /home/bin
+ENV PATH /home/bin:$PATH
 
 RUN apt-get install ncbi-blast+
-ADD external_software/pplacer /home/metabarcoding/
-ADD external_software/guppy /home/metabarcoding/
-ADD external_software/raxmlHPC-PTHREADS /home/metabarcoding/
-ADD external_software/taxit /home/metabarcoding/
-ADD external_software/hmmalign /home/metabarcoding/
-ADD external_software/hmmbuild /home/metabarcoding/
+ADD external_software/pplacer /home/bin/
+ADD external_software/guppy /home/bin/
+ADD external_software/raxmlHPC-PTHREADS /home/bin/
+ADD external_software/taxit /home/bin/
+ADD external_software/hmmalign /home/bin/
+ADD external_software/hmmbuild /home/bin/
