@@ -9,16 +9,19 @@ RUN apt-get update -y -qq --fix-missing
 #RUN apt-get upgrade -y
 
 RUN mkdir /home/metabarcoding
-RUN mkdir /home/bin
-ENV PATH /home/bin:$PATH
+#RUN mkdir /home/bin
+#ENV PATH /home/bin:$PATH
 
 RUN apt-get install ncbi-blast+
-ADD external_software/pplacer /home/bin/
-ADD external_software/guppy /home/bin/
-ADD external_software/raxmlHPC-PTHREADS /home/bin/
-ADD external_software/taxit /home/bin/
-ADD external_software/hmmalign /home/bin/
-ADD external_software/hmmbuild /home/bin/
+ADD external_software/pplacer /usr/bin/
+ADD external_software/guppy /usr/bin/
+ADD external_software/raxmlHPC-PTHREADS /usr/bin/
+ADD external_software/taxit /usr/bin/
+ADD external_software/hmmalign /usr/bin/
+ADD external_software/hmmbuild /usr/bin/
+ADD external_software/flash /usr/bin/
+ADD external_software/vsearch /usr/bin/
+ADD external_software/trimmomatic-0.32.jar /usr/bin/
 
 #create mount point at /home
 VOLUME /home	
