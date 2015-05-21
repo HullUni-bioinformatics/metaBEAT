@@ -20,7 +20,9 @@ ADD external_software/taxit /home/bin/
 ADD external_software/hmmalign /home/bin/
 ADD external_software/hmmbuild /home/bin/
 
-VOLUME /home	#create mount point at /home
-WORKDIR /home	#make /home the working directory in the image
+#create mount point at /home
+VOLUME /home	
+#make /home the working directory in the image
+WORKDIR /home	
 RUN chmod -R a+rw /home
 

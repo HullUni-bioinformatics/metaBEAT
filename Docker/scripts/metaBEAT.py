@@ -274,7 +274,7 @@ if args.blast:
 		os.chdir(queryID)
 		if (querydata[0]=="fastq"):
 			if len(querydata)==3:
-				trimmomatic_path="java -jar /home/chrishah/src/Trimmomatic/Trimmomatic-0.32/trimmomatic-0.32.jar"
+				trimmomatic_path="java -jar /usr/bin/trimmomatic-0.32.jar"
 				print "\ntrimming PE reads with trimmomatic"
 				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, querydata[1], querydata[2], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
 				trimmed_files=[queryID+'_forward.paired.fastq.gz', queryID+'_forward.singletons.fastq.gz', queryID+'_reverse.paired.fastq.gz', queryID+'_reverse.singletons.fastq.gz']
