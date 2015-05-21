@@ -30,8 +30,9 @@ reference_taxa = {}
 taxids = defaultdict(int)
 date = time.strftime("%d-%b-%Y").upper() 
 
-usage = "%prog [options] REFlist"
-parser = argparse.ArgumentParser(usage='%(prog)s [options] REFlist', formatter_class=RawTextHelpFormatter)
+parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool')
+#usage = "%prog [options] REFlist"
+#parser = argparse.ArgumentParser(usage='%(prog)s [options] REFlist', formatter_class=RawTextHelpFormatter)
 
 parser.add_argument("-Q", "--querylist", help="file containing a list of query files", metavar="<FILE>", action="store")
 parser.add_argument("-v", "--verbose", help="turn verbose output on", action="store_true")
@@ -44,7 +45,7 @@ parser.add_argument("-m", "--marker", help="marker ID (default: marker)", metava
 parser.add_argument("-n", "--n_threads", help="Number of threads (default: 1)", type=int, metavar="<INT>", action="store", default="1")
 parser.add_argument("-E", "--extract_centroid_reads", help="extract centroid reads to files", action="store_true")
 parser.add_argument("-e", "--extract_all_reads", help="extract reads to files", action="store_true")
-query_group = parser.add_argument_group('Query', 'The parameters in this group affect how the query sequences are processed')
+query_group = parser.add_argument_group('Query preprocessing', 'The parameters in this group affect how the query sequences are processed')
 query_group.add_argument("--trim_adapter", help="trim adapters provided in file", metavar="<FILE>", action="store")
 query_group.add_argument("--trim_qual", help="minimum phred quality score (default: 30)", metavar="<INT>", type=int, action="store", default=30)
 query_group.add_argument("--trim_window", help="sliding window size (default: 5) for trimming; if average quality drops below the specified minimum quality all subsequent bases are removed from the reads", metavar="<INT>", type=int, action="store", default=5)
@@ -56,14 +57,14 @@ reference_group = parser.add_argument_group('Reference', 'The parameters in this
 reference_group.add_argument("-R", "--REFlist", help="file containing a list of files to be used as reference sequences", metavar="<FILE>", action="store")
 reference_group.add_argument("--gb_out", help="output the corrected gb file", metavar="<FILE>", action="store", default="")
 reference_group.add_argument("--rec_check", help="check records to be used as reference", action="store_true")
-cluster_group = parser.add_argument_group('Clustering options', 'The parameters in this group affect read clustering')
+cluster_group = parser.add_argument_group('Query clustering options', 'The parameters in this group affect read clustering')
 cluster_group .add_argument("--clust_match", help="identity threshold for clustering in percent (default: 1)", type=float, metavar="<FLOAT>", action="store", default="1")
 cluster_group .add_argument("--clust_cov", help="minimum number of records in cluster (default: 1)", type=int, metavar="<INT>", action="store", default="1")
 blast_group = parser.add_argument_group('BLAST search', 'The parameters in this group affect BLAST search and BLAST based taxonomic assignment')
 blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
-parser.add_argument("--version", action="version", version='%(prog)s v0.0')
+parser.add_argument("--version", action="version", version='%(prog)s v.0.5')
 args = parser.parse_args()
 
 ####START OF MAIN PROGRAM
