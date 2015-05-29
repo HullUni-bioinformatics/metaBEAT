@@ -23,13 +23,13 @@ informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fast
 all_seqs = []
 skipped_ref_seqs = [] #defaultdict(list)
 references = {}
-queries = defaultdict(list)
+queries = defaultdict(dict)
 seq_info = ['"seqname","accession","tax_id","species_name","is_type"']
 records = {}
 reference_taxa = {}
 taxids = defaultdict(int)
 date = time.strftime("%d-%b-%Y").upper()
-barcodes = 0
+files_to_barcodes = defaultdict(dict)
 
 parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool')
 #usage = "%prog [options] REFlist"
@@ -121,22 +121,31 @@ else:
 			print "\nquery file is in incorrect format - we expect a tab delimited file:\n<sample_ID>\t<format>\t<file>\t<optional file>"
 			sys.exit(0)
 		else:
+			per_sample_query_format=""
+			per_sample_barcodes=[]
+			per_sample_query_files=[]
 			if not informats.has_key(querydata[1]):
 				print "query file format for sample %s is invalid" % querydata[0]
+				per_sample_query_format=querydata[1]
 				sys.exit(0) 
-			for i in range(1,len(querydata)):
-#			for f in querydata[2:]:
+			for i in range(2,len(querydata)):
 				if re.match("^[ACTG]*$", querydata[i]):
-					print "column %i looks like a barcode" %i
+#					print "column %i looks like a barcode" %i
+					per_sample_barcodes.append(querydata[i])
 				else:
 					if not os.path.isfile(querydata[i]):
 						print "%s is not a valid file" %querydata[i]
 						sys.exit(0)
+					per_sample_query_files.append(querydata[i])
 			
-			queries[querydata[0]] = querydata[1:]
-			if len(querydata)>=5:
-				print "query file contains more than 4 columns - interpreting columns 5+ as barcodes"
-				barcodes=1
+#			queries[querydata[0]] = querydata[1:]
+			queries[querydata[0]]['format'] = querydata[1]
+			queries[querydata[0]]['files'] = per_sample_query_files
+			if per_sample_barcodes:
+				queries[querydata[0]]['barcodes'] = per_sample_barcodes
+				files_to_barcodes["|".join(per_sample_query_files)]["-".join(per_sample_barcodes)] = querydata[0]
+#		print queries[querydata[0]]
+#		print files_to_barcodes
 	
 
 #print references
@@ -277,7 +286,79 @@ if args.blast:
 print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
 if args.blast:
-	for queryID, querydata in sorted(queries.items()): #loop through the query files and read in the current query id and the path to the files
+
+
+	if files_to_barcodes:
+		print "Barcodes detected - initialize demultiplexing"
+		if not os.path.exists('demultiplexed'):
+			os.makedirs('demultiplexed')
+			
+		os.chdir('demultiplexed')
+		for lib in files_to_barcodes.keys():
+			data = lib.split("|")
+			compr_mode = ""
+			print "assessing basic characteristics"
+#			print files_to_barcodes[lib]
+			barcodes_num = len(files_to_barcodes[lib].keys()[0].split("-"))
+			if barcodes_num == 2:
+#				print "interpreting barcodes as forward and reverse inline"
+				barcode_mode = "--inline_inline"
+			elif barcodes_num == 1:
+#				print "interpreting barcodes as forward inline only"
+				barcode_mode = "--inline_null"
+				
+			if lib.endswith(".gz"):
+				compr_mode = "gzfastq"
+#				print "set mode to %s" %compr_mode
+			else:
+				compr_mode = "fastq"
+#				print "set mode to %s" %compr_mode
+
+#			print "create temporal barcode file"
+			BC = open("barcodes","w")
+			for sample in files_to_barcodes[lib].keys():
+#				print "This is sample: %s" %sample
+				bc = sample.split("-")
+#				print bc
+				if len(bc) != barcodes_num:
+					print "expecting %i barcode(s) for all samples - something's wrong with sample %s" %(barcodes_num, sample)
+					sys.exit()
+				BC.write("\t".join(bc)+"\n")
+
+			BC.close()
+			if len(data)>1:
+				print "data comes as paired end - ok"
+				demultiplex_cmd="process_shortreads -1 %s -2 %s -i %s -o . -b barcodes %s -y fastq" %(data[0], data[1], compr_mode, barcode_mode)
+				print demultiplex_cmd
+				cmdlist = shlex.split(demultiplex_cmd)
+				cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
+				stdout,stderr = cmd.communicate() #[0]
+				print stdout
+				print stderr
+
+#				print "renaming results"
+				for sample in files_to_barcodes[lib].keys():
+#					print files_to_barcodes[lib][sample]
+					new_file_list=[]
+					for a in range(1,3):
+						old = "sample_%s.%i.fq" %(sample,a)
+#						print old
+						new = "%s_%i.fastq" %(files_to_barcodes[lib][sample],a)
+#						print new
+						os.rename(old,new)
+						new_file_list.append('../demultiplexed/'+new)
+						
+					queries[files_to_barcodes[lib][sample]]['files'] = new_file_list
+			elif len(data)==1:
+				print "data comes in single end - ok"
+				print "currently not supported"
+				sys.exit()
+
+	os.chdir('../')
+#	print queries
+		
+	for queryID in sorted(queries):
+#	for queryID, querydata in sorted(queries.items()): #loop through the query files and read in the current query id and the path to the files
 		print "\nprocessing query ID: %s\n###############\n" % (queryID)
 		species_count = defaultdict(list)
 		taxonomy_count = defaultdict(dict)
@@ -286,15 +367,15 @@ if args.blast:
 			os.makedirs(queryID)
 
 		os.chdir(queryID)
-		if (querydata[0]=="fastq"):
-			if len(querydata)==3:
-				trimmomatic_path="java -jar /home/bin/trimmomatic-0.32.jar"
+		if (queries[queryID]['format']=="fastq"):
+			if len(queries[queryID]['files'])==2:
+				trimmomatic_path="java -jar /usr/bin/trimmomatic-0.32.jar"
 				print "\ntrimming PE reads with trimmomatic"
-				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, querydata[1], querydata[2], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
+				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queries[queryID]['files'][1], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
 				trimmed_files=[queryID+'_forward.paired.fastq.gz', queryID+'_forward.singletons.fastq.gz', queryID+'_reverse.paired.fastq.gz', queryID+'_reverse.singletons.fastq.gz']
-			elif len(querydata)==2:
+			elif len(queries[queryID]['files'])==1:
 				print "\ntrimming SE reads with trimmomatic"
-				trimmomatic_exec= trimmomatic_path+" SE -threads %i -phred%i %s %s_trimmed.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, querydata[1], queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
+				trimmomatic_exec= trimmomatic_path+" SE -threads %i -phred%i %s %s_trimmed.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
 				trimmed_files=[queryID+'_trimmed.fastq.gz']
 
 			trimmomatic="%s" % trimmomatic_exec
@@ -320,13 +401,13 @@ if args.blast:
 					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
 
 				files = " ".join(trimmed_files[-2:])
-				cmd="zcat %s | fastq_to_fasta -Q %i | fastx_reverse_complement > temp2.fasta" % (files,args.phred)
+				cmd="zcat %s | fastx_reverse_complement | fastx_clipper -a GGAGGATATACAGTTCAACCAGTAC | fastq_to_fasta -Q %i > temp2.fasta" % (files,args.phred)
 				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
 				files = " ".join(trimmed_files[:-2])
-				cmd="zcat %s | fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred)
+				cmd="zcat %s | fastx_reverse_complement | fastx_clipper -a GGAGGATATACAGTTCAACCAGTACC | fastx_reverse_complement | fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred)
 				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
