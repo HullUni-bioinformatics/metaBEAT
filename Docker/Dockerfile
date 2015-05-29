@@ -20,6 +20,9 @@ ADD external_software/hmmbuild /usr/bin/
 ADD external_software/flash /usr/bin/
 ADD external_software/vsearch /usr/bin/
 ADD external_software/trimmomatic-0.32.jar /usr/bin/
+ADD external_software/fastq_to_fasta /usr/bin/ 
+ADD external_software/fastx_clipper /usr/bin/
+ADD external_software/fastx_reverse_complement /usr/bin/
 
 RUN mkdir /src
 ADD scripts/metaBEAT.py /src/
@@ -27,6 +30,8 @@ ENV PATH /src:$PATH
 
 #create mount point at /working
 RUN mkdir /home/working
+RUN mkdir /home/working/IN
+RUN mkdir /home/working/OUT
 VOLUME /home/working
 #make /working the working directory in the image
 WORKDIR /home/working	
