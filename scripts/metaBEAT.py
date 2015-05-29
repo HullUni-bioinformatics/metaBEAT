@@ -306,13 +306,13 @@ if args.blast:
 					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
 
 				files = " ".join(trimmed_files[-2:])
-				cmd="zcat %s | fastq_to_fasta | fastx_reverse_complement > temp2.fasta" % (files) # trimmed_files[2], trimmed_files[3])
+				cmd="zcat %s | fastq_to_fasta -Q %i | fastx_reverse_complement > temp2.fasta" % (files,args.phred)
 				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
 				files = " ".join(trimmed_files[:-2])
-				cmd="zcat %s | fastq_to_fasta > temp1.fasta" % (files) #trimmed_files[0], trimmed_files[1])
+				cmd="zcat %s | fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred)
 				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
