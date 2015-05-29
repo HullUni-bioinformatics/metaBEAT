@@ -28,7 +28,8 @@ seq_info = ['"seqname","accession","tax_id","species_name","is_type"']
 records = {}
 reference_taxa = {}
 taxids = defaultdict(int)
-date = time.strftime("%d-%b-%Y").upper() 
+date = time.strftime("%d-%b-%Y").upper()
+barcodes = 0
 
 parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool')
 #usage = "%prog [options] REFlist"
@@ -68,6 +69,12 @@ parser.add_argument("--version", action="version", version='%(prog)s v.0.5')
 args = parser.parse_args()
 
 ####START OF MAIN PROGRAM
+if not args.querylist:
+	print "\nmetabeat expects at least a query file\n"
+	parser.print_help()
+	sys.exit()
+
+
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
 
@@ -117,12 +124,19 @@ else:
 			if not informats.has_key(querydata[1]):
 				print "query file format for sample %s is invalid" % querydata[0]
 				sys.exit(0) 
-			for f in querydata[2:]:
-				if not os.path.isfile(f):
-					print "%s is not a valid file" % f
-					sys.exit(0)
+			for i in range(1,len(querydata)):
+#			for f in querydata[2:]:
+				if re.match("^[ACTG]*$", querydata[i]):
+					print "column %i looks like a barcode" %i
+				else:
+					if not os.path.isfile(querydata[i]):
+						print "%s is not a valid file" %querydata[i]
+						sys.exit(0)
 			
 			queries[querydata[0]] = querydata[1:]
+			if len(querydata)>=5:
+				print "query file contains more than 4 columns - interpreting columns 5+ as barcodes"
+				barcodes=1
 	
 
 #print references
