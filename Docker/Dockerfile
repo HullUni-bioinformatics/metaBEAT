@@ -23,6 +23,7 @@ ADD external_software/trimmomatic-0.32.jar /usr/bin/
 ADD external_software/fastq_to_fasta /usr/bin/ 
 ADD external_software/fastx_clipper /usr/bin/
 ADD external_software/fastx_reverse_complement /usr/bin/
+ADD external_software/process_shortreads /usr/bin/
 
 RUN mkdir /src
 ADD scripts/metaBEAT.py /src/
