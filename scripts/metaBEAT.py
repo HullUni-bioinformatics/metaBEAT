@@ -124,6 +124,7 @@ else:
 			per_sample_query_format=""
 			per_sample_barcodes=[]
 			per_sample_query_files=[]
+#			print "processing sample: %s" %querydata[0]
 			if not informats.has_key(querydata[1]):
 				print "query file format for sample %s is invalid" % querydata[0]
 				per_sample_query_format=querydata[1]
@@ -138,14 +139,17 @@ else:
 						sys.exit(0)
 					per_sample_query_files.append(querydata[i])
 			
-#			queries[querydata[0]] = querydata[1:]
 			queries[querydata[0]]['format'] = querydata[1]
 			queries[querydata[0]]['files'] = per_sample_query_files
 			if per_sample_barcodes:
+#				print "barcodes %s found for sample %s" %("-".join(per_sample_barcodes), querydata[0])
 				queries[querydata[0]]['barcodes'] = per_sample_barcodes
 				files_to_barcodes["|".join(per_sample_query_files)]["-".join(per_sample_barcodes)] = querydata[0]
 #		print queries[querydata[0]]
 #		print files_to_barcodes
+#print len(queries)
+#print len(files_to_barcodes[files_to_barcodes.keys()[0]])
+#print files_to_barcodes
 	
 
 #print references
