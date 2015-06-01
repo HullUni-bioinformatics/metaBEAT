@@ -19,6 +19,9 @@ from os import rename
 from collections import defaultdict
 import shlex, subprocess
 
+##############set this, or put a file called taxonomy.db in the same directory as the metaBEAT.py script############
+taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
+#############################################################################
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
 all_seqs = []
 skipped_ref_seqs = [] #defaultdict(list)
@@ -73,7 +76,6 @@ if not args.querylist:
 	print "\nmetabeat expects at least a query file\n"
 	parser.print_help()
 	sys.exit()
-
 
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
@@ -227,13 +229,20 @@ print "\ntotal number of valid records: %i\n" % len(all_seqs)
 
 
 if args.taxids:
+	if not taxonomy_db or not os.path.isfile(taxonomy_db): #if no path to the taxonomy database is specifed or the path is not correct
+		if os.path.isfile(os.path.dirname(sys.argv[0])+'/taxonomy.db'): #check if taxonomy.db is present in the same path as the metabeat.py script
+			taxonomy_db = "%s/taxonomy.db" %os.path.dirname(sys.argv[0])
+		else:
+			print "\nmetaBEAT.py requires a taxonomy database. Please configure it using taxtastic. Per default metaBEAT expects a file 'taxonomy.db' in the same directory that contains the metaBEAT.py script. If you are not happy with that please change the variable 'taxonomy_db' at the top of this script to the correct path to your taxonomy.db file.\n"
+			sys.exit() 
+
 	print "write out taxids to taxids.txt\n"
 	f = open("taxids.txt","w")
 	for key in taxids.keys():
 #		print key
 		f.write(key + "\n")
 	f.close()
-	cmd = "taxit taxtable -d /home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db -t taxids.txt"# -o taxa.csv"
+	cmd = "taxit taxtable -d %s -t taxids.txt" %taxonomy_db# -o taxa.csv"
 	print "running taxit to generate reduced taxonomy table"
 	print cmd
 
@@ -410,13 +419,13 @@ if args.blast:
 					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
 
 				files = " ".join(trimmed_files[-2:])
-				cmd="zcat %s | fastx_reverse_complement | fastx_clipper -a GGAGGATATACAGTTCAACCAGTAC | fastq_to_fasta -Q %i > temp2.fasta" % (files,args.phred)
+				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTAC -Q %i| fastq_to_fasta -Q %i > temp2.fasta" % (files, args.phred, args.phred, args.phred)
 				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
 				files = " ".join(trimmed_files[:-2])
-				cmd="zcat %s | fastx_reverse_complement | fastx_clipper -a GGAGGATATACAGTTCAACCAGTACC | fastx_reverse_complement | fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred)
+				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTACC -Q %i| fastx_reverse_complement -Q %i| fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred, args.phred, args.phred, args.phred)
 				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
