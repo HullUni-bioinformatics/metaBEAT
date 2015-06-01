@@ -19,6 +19,9 @@ from os import rename
 from collections import defaultdict
 import shlex, subprocess
 
+##############set this, or put a file called taxonomy.db in the same directory as the metaBEAT.py script############
+taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
+#############################################################################
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
 all_seqs = []
 skipped_ref_seqs = [] #defaultdict(list)
@@ -73,7 +76,6 @@ if not args.querylist:
 	print "\nmetabeat expects at least a query file\n"
 	parser.print_help()
 	sys.exit()
-
 
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
@@ -171,7 +173,12 @@ for reffile, refformat in references.items():
 				seqs[i].features[0].qualifiers['original_desc'] = seqs[i].description
 			
 			if not seqs[i].features[0].qualifiers.has_key('organism'):	#if the record does not have an organism key. Again will happen for custom fasta sequences
-				seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].description.split(" ")[0], seqs[i].description.split(" ")[1])]	#add an organism key and make it the first 2 words in the record description will are per default the first 2 words in the fasta header
+				print seqs[i].description
+#				seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].description.split(" ")[0], seqs[i].description.split(" ")[1])] #add an organism key and make it the first 2 words in the record description will are per default the first 2 words in the fasta header
+				seqs[i].features[0].qualifiers['organism'] = ["%s" % seqs[i].description.split(" ")[0]]	#add an organism key and make it the first word in the record description will are per default the first 2 words in the fasta header
+				sp_search = re.compile('^sp$|^sp[.]$|^sp[0-9]+$')
+				if not sp_search.match(seqs[i].description.split(" ")[1]):
+					seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].description.split(" ")[1])]	#if the second word in the description is not 'sp' or 'sp.', i.e. it is unknown, then add also the second word to the organism field
 
 			if not seqs[i].features[0].qualifiers['organism'][0] in reference_taxa:	#if the organism name has not yet been encountert the following lines will find the corresponding taxid, add it to the record and store it in the reference_taxa dictionary
 #				print "seeing %s for the first time" %seqs[i].features[0].qualifiers['organism'][0]
@@ -222,13 +229,20 @@ print "\ntotal number of valid records: %i\n" % len(all_seqs)
 
 
 if args.taxids:
+	if not taxonomy_db or not os.path.isfile(taxonomy_db): #if no path to the taxonomy database is specifed or the path is not correct
+		if os.path.isfile(os.path.dirname(sys.argv[0])+'/taxonomy.db'): #check if taxonomy.db is present in the same path as the metabeat.py script
+			taxonomy_db = "%s/taxonomy.db" %os.path.dirname(sys.argv[0])
+		else:
+			print "\nmetaBEAT.py requires a taxonomy database. Please configure it using taxtastic. Per default metaBEAT expects a file 'taxonomy.db' in the same directory that contains the metaBEAT.py script. If you are not happy with that please change the variable 'taxonomy_db' at the top of this script to the correct path to your taxonomy.db file.\n"
+			sys.exit() 
+
 	print "write out taxids to taxids.txt\n"
 	f = open("taxids.txt","w")
 	for key in taxids.keys():
 #		print key
 		f.write(key + "\n")
 	f.close()
-	cmd = "taxit taxtable -d /home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db -t taxids.txt"# -o taxa.csv"
+	cmd = "taxit taxtable -d %s -t taxids.txt" %taxonomy_db# -o taxa.csv"
 	print "running taxit to generate reduced taxonomy table"
 	print cmd
 
@@ -405,13 +419,13 @@ if args.blast:
 					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
 
 				files = " ".join(trimmed_files[-2:])
-				cmd="zcat %s | fastx_reverse_complement | fastx_clipper -a GGAGGATATACAGTTCAACCAGTAC | fastq_to_fasta -Q %i > temp2.fasta" % (files,args.phred)
+				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTAC -Q %i| fastq_to_fasta -Q %i > temp2.fasta" % (files, args.phred, args.phred, args.phred)
 				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
 				files = " ".join(trimmed_files[:-2])
-				cmd="zcat %s | fastx_reverse_complement | fastx_clipper -a GGAGGATATACAGTTCAACCAGTACC | fastx_reverse_complement | fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred)
+				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTACC -Q %i| fastx_reverse_complement -Q %i| fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred, args.phred, args.phred, args.phred)
 				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
@@ -714,11 +728,27 @@ if args.blast:
 #					print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
 					
 					if current_reads: #This list is only non empty if either -e or -E was specified
-#						print current_reads
+#						
+						if args.extract_centroid_reads:	#if the user has specified to extract centroid reads
+							#the following will sort the read ids by the number of reads in the respective cluster
+							temp_dict = defaultdict(list) #temporal dictionary 
+							for ID in current_reads:	#populate temporal dictionary with read counts as keys and centroid ids as values in a list (in case there are clusters that happen to have the same number of reads
+								temp_dict[cluster_counts[unknown_seqs_dict[ID].id]].append(ID)
+#								print "%s: %s" %(cluster_counts[unknown_seqs_dict[ID].id], ID)
+								
+							current_reads=[]	#empty the original list
+							for count in sorted(temp_dict.keys(), key=int, reverse=True):	#loop through the temporal dictionary reverse sorted by keys
+#								print temp_dict[count]
+								for read in temp_dict[count]:	#because the read ids are in a list I ll loop through here
+#									print "%s: %s" %(count, read)
+									current_reads.append(read)	#put the read ids back into the list sorted in descending order of the number reads in the respective clusters
+								
+
 						fas_out = open(hit.replace(" ", "_")+'.fasta',"w")
 						for ID in current_reads:
+							unknown_seqs_dict[ID].description = "%s|%s" %(queryID, unknown_seqs_dict[ID].id)
 							if args.extract_centroid_reads:
-								unknown_seqs_dict[ID].id += "|%i" % cluster_counts[unknown_seqs_dict[ID].id] 
+								unknown_seqs_dict[ID].id = "%s|%s|%i|%.2f" % (queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
 								unknown_seqs_dict[ID].description = unknown_seqs_dict[ID].id
 #							print unknown_seqs_dict[ID]
 							fas_out.write(unknown_seqs_dict[ID].format("fasta"))
@@ -740,4 +770,4 @@ if args.blast:
 		del tax_dict["tax_id"][-1] #remove the last element, i.e. 'species'
 		
 		print '\n'+time.strftime("%c")+'\n'
-print "Allow to optionally retrieve all read ids (or even reads) that were assigned to a given taxononomic level, i.e. Salmonidae - need to make a dictionary with cetroid ids as keys and a list of reads as values"
+print "remove read-pair id from extended reads. \n output overall run summary, i.e. per sample: raw reads, trimmed reads, merged reads, clusters, etc. \n make OTU table output standard"
