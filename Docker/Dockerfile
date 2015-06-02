@@ -29,8 +29,8 @@ RUN mkdir /src
 ADD scripts/metaBEAT.py /src/
 ENV PATH /src:$PATH
 
-RUN taxit new_database -d /src/taxonomy.db
-RUN rm /src/taxdmp.zip
+#RUN taxit new_database -d /src/taxonomy.db
+#RUN rm /src/taxdmp.zip
 
 #create mount point at /working
 RUN mkdir /home/working
