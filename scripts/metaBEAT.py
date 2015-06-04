@@ -62,14 +62,63 @@ reference_group.add_argument("-R", "--REFlist", help="file containing a list of 
 reference_group.add_argument("--gb_out", help="output the corrected gb file", metavar="<FILE>", action="store", default="")
 reference_group.add_argument("--rec_check", help="check records to be used as reference", action="store_true")
 cluster_group = parser.add_argument_group('Query clustering options', 'The parameters in this group affect read clustering')
-cluster_group .add_argument("--clust_match", help="identity threshold for clustering in percent (default: 1)", type=float, metavar="<FLOAT>", action="store", default="1")
-cluster_group .add_argument("--clust_cov", help="minimum number of records in cluster (default: 1)", type=int, metavar="<INT>", action="store", default="1")
+
+cluster_group.add_argument("--clust_match", help="identity threshold for clustering in percent (default: 1)", type=float, metavar="<FLOAT>", action="store", default="1")
+cluster_group.add_argument("--clust_cov", help="minimum number of records in cluster (default: 1)", type=int, metavar="<INT>", action="store", default="1")
 blast_group = parser.add_argument_group('BLAST search', 'The parameters in this group affect BLAST search and BLAST based taxonomic assignment')
 blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
 parser.add_argument("--version", action="version", version='%(prog)s v.0.5')
 args = parser.parse_args()
+
+###FUNCITONS
+def file_check(file_to_test, optional_message=None):
+	"tests if a file exists"
+	file_to_test = os.path.abspath(file_to_test)
+	if not os.path.isfile(file_to_test):
+		exit_message = "%s is not a valid file" %file_to_test
+		if optional_message:
+			exit_message = optional_message
+		sys.exit(exit_message)
+	return True
+
+#def assess_file_format(infile, sep="\t", is_col_num=None, min_col_num=None, max_col_num=None, format_list=['genbank','gb','fasta','fa','ab1','ab1','fastq','fq'], columns=['sample','format','file','file','barcode','barcode'], ref=None, que=None):
+#	"The function checks for correct formatting of input file"
+#	if ref:
+#		min_col_num = 2
+#		max_col_num = 2
+#		mi-ma = 2
+#		format_list=format_list[:2]
+#		columns = ['file','format']
+#	elif que:
+#		min_col_num = 3
+#		max_col_num = 6
+#		mi-ma = "%s-%s" %(min_col_num, max_col_num)
+#		format_list=format_list[2:]
+#		columns = ['sample','format','file','optional']
+#	lines = [line.strip() for line in open(infile)]
+#	if not lines:
+#		sys.exit("%s is an empty file" %infile)
+#	for line in lines:
+#		data = line.split(sep)
+#		if len(data) > max_col_num or len(data) < min_col_num:
+#			sys.exit("%s is incorrectly formatted. We expect %i columns separated by \"%s\": <%s>" %(infile, mi-ma, sep, sep.join(columns)))
+#		
+#		for i in range(len(columns)):
+#			if columns[i] is 'format':
+#				if not data[i] in format_list:
+#					sys.exit("%s is not an accepted format. Currently accepted are: %s" %(data[format_column-1], format_list))
+#			
+#			
+#			file_indices=[i for i, x in enumerate(format_list) if x == 'file']
+#			for col in file_indices:
+#				if not os.path.isfile(col):
+#					sys.exit("%s is not a valid file" %col)
+#
+#			return data
+###########
+
 
 ####START OF MAIN PROGRAM
 if not args.querylist:
@@ -85,6 +134,8 @@ if args.trim_adapter:
 	if not os.path.isfile(args.trim_adapter):
 		print "adapter file is not a valid file"
 		sys.exit(0)
+
+file_check(file_to_test=args.REFlist, optional_message="no valid reference file supplied")
 
 if not os.path.isfile(args.REFlist):
 	print "no valid reference file supplied\n"
@@ -139,7 +190,7 @@ else:
 					if not os.path.isfile(querydata[i]):
 						print "%s is not a valid file" %querydata[i]
 						sys.exit(0)
-					per_sample_query_files.append(querydata[i])
+					per_sample_query_files.append(os.path.abspath(querydata[i]))
 			
 			queries[querydata[0]]['format'] = querydata[1]
 			queries[querydata[0]]['files'] = per_sample_query_files
@@ -155,6 +206,8 @@ else:
 	
 
 #print references
+print "\n######## PROCESSING REFERENCE DATA ########\n"
+
 for reffile, refformat in references.items():
 	seqs=list(SeqIO.parse(reffile,refformat, alphabet=generic_dna))
 	print "processing %s (containing %i records)" % (reffile,len(seqs))
@@ -192,13 +245,14 @@ for reffile, refformat in references.items():
 					taxid = taxon["IdList"][0]	#the taxid is the first element in the dictionary that is returned from Entrez
 					seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + taxid]	#update the db_rxref qualifier with the correct taxid
 					taxids[taxid] += 1
-					current = '"%s","%s","%s","%s",0' % (seqs[i].id, seqs[i].id, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
-					seq_info.extend([current])	#add the string to the seq_info array
 #					print "adding %s with taxid: %s to the dictionary" %(seqs[i].features[0].qualifiers['organism'][0], taxid)
 					reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
 			else:
 				seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]]
 #				print "Have seen %s before. The taxid is: %s" %(seqs[i].features[0].qualifiers['organism'][0], reference_taxa[seqs[i].features[0].qualifiers['organism'][0]])
+
+			current = '"%s","%s","%s","%s",0' % (seqs[i].id, seqs[i].id, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
+			seq_info.extend([current])	#add the string to the seq_info array
 
 			if not seqs[i].annotations.has_key('date'):	#set the date in the record if it does not exist
 				seqs[i].annotations['date'] = date
@@ -207,6 +261,8 @@ for reffile, refformat in references.items():
 			taxid = seqs[i].features[0].qualifiers['db_xref'][0].split(":")[1]
 #			print taxid
 			taxids[taxid] += 1
+			current = '"%s","%s","%s","%s",0' % (seqs[i].id, seqs[i].id, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
+			seq_info.extend([current])	#add the string to the seq_info array
 
 	if skipped_ref_seqs:
 		SKIPPED = open("skipped_seqs.fasta","w")
@@ -242,19 +298,22 @@ if args.taxids:
 #		print key
 		f.write(key + "\n")
 	f.close()
-	cmd = "taxit taxtable -d %s -t taxids.txt" %taxonomy_db# -o taxa.csv"
+	cmd = "taxit taxtable -d %s -t taxids.txt -o taxa.csv" %taxonomy_db# -o taxa.csv"
+#	cmd = "taxit taxtable -d %s -t taxids.txt" %taxonomy_db# -o taxa.csv"
 	print "running taxit to generate reduced taxonomy table"
 	print cmd
 
 #	handle = subprocess.call(taxtable, shell=True)
 	taxtable,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-	if args.phyloplace:
-		f = open("taxa.csv","w")
-		f.write(taxtable + "\n")
-		f.close()
+#	if args.phyloplace:
+#		f = open("taxa.csv","w")
+#		f.write(taxtable + "\n")
+#		f.close()
 
 	tax_dict = {}
-	for line in taxtable.split("\n"):
+	taxtable = open("taxa.csv","r")
+	for line in taxtable:
+#	for line in taxtable.split("\n"):
 #		print line
 		line = re.sub('"','',line)
 #		print line
@@ -293,8 +352,10 @@ if args.fasta:	#this bit writes out the sequences that will become the reference
 #	OUT_temp.close()
 
 if args.blast:
-	print "building blast db for marker %s\n" % args.marker
+	print "\n### BUILDING BLAST DATABASE ###\n"
+#	print "building blast db for marker %s\n" % args.marker
 	makeblastdb="makeblastdb -in refs.fasta -dbtype nucl -out %s_blast_db" % args.marker
+	print makeblastdb
 	cmdlist = shlex.split(makeblastdb)
 	cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE)
 	stdout = cmd.communicate()[0]
@@ -305,9 +366,10 @@ print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
 if args.blast:
 
-
+	print "\n######## PROCESSING QUERIES ########\n"
 	if files_to_barcodes:
-		print "Barcodes detected - initialize demultiplexing"
+		print "\n### DEMULTIPLEXING ###\n"
+#		print "Barcodes detected - initialize demultiplexing"
 		if not os.path.exists('demultiplexed'):
 			os.makedirs('demultiplexed')
 			
@@ -372,12 +434,13 @@ if args.blast:
 				print "currently not supported"
 				sys.exit()
 
-	os.chdir('../')
+		os.chdir('../')
 #	print queries
 		
+
 	for queryID in sorted(queries):
 #	for queryID, querydata in sorted(queries.items()): #loop through the query files and read in the current query id and the path to the files
-		print "\nprocessing query ID: %s\n###############\n" % (queryID)
+		print "\n##### processing query ID: %s #####\n" % (queryID)
 		species_count = defaultdict(list)
 		taxonomy_count = defaultdict(dict)
 		nohit_count = defaultdict(list)
@@ -386,6 +449,7 @@ if args.blast:
 
 		os.chdir(queryID)
 		if (queries[queryID]['format']=="fastq"):
+			print "\n### READ QUALITY TRIMMING ###\n"
 			if len(queries[queryID]['files'])==2:
 				trimmomatic_path="java -jar /usr/bin/trimmomatic-0.32.jar"
 				print "\ntrimming PE reads with trimmomatic"
@@ -406,6 +470,7 @@ if args.blast:
 
 			if len(trimmed_files)==4:
 				if args.merge:
+					print "\n### MERGING READ PAIRS ###\n"
 					print "merging paired-end reads with flash\n"
 					cmd="flash %s %s -M %s -t %i -p %i -o %s -z" % ( trimmed_files[0], trimmed_files[2], args.product_length, args.n_threads, args.phred, queryID)
 					print cmd
@@ -417,6 +482,8 @@ if args.blast:
 					trimmed_files[0]= queryID+'.notCombined_1.fastq.gz'
 					trimmed_files[2]= queryID+'.notCombined_2.fastq.gz'
 					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
+				
+				print "\n### JUST SOME FILE WRANGLING ###\n"
 
 				files = " ".join(trimmed_files[-2:])
 				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTAC -Q %i| fastq_to_fasta -Q %i > temp2.fasta" % (files, args.phred, args.phred, args.phred)
@@ -475,6 +542,7 @@ if args.blast:
 		querycount[queryID] += len(unknown_seqs)
 
 		##running clustering
+		print "\n### CLUSTERING ###\n"
 		print "\nclustering using vsearch"
 		cmd = "vsearch --cluster_fast %s --id %.2f --threads %s --centroids %s_centroids.fasta --uc %s.uc" % (queryfile, args.clust_match, args.n_threads, queryID, queryID )
 		print cmd
@@ -522,6 +590,8 @@ if args.blast:
 		blast_db = "../%s_blast_db" % args.marker
 		blast_out = "%s_%s_blastn.out.xml" % (args.marker, queryID)
 
+
+		print "\n### RUNNING LOCAL BLAST ###\n"
 		print "running blast search against local database %s" % blast_db
 		blast_cmd = "blastn -query %s -db %s -evalue 0.001 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, blast_out, args.n_threads) 
 		print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
@@ -534,8 +604,10 @@ if args.blast:
 
 		blast_handle = NcbiblastxCommandline(cmd='blastn', query=queryfile, db=blast_db, evalue=0.001, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
 		stdout, stderr = blast_handle()
-		blast_result_handle = open(blast_out) #read in blast result (in xml format)
 
+
+		print "\n### INTERPRETING BLAST RESULTS ###\n"
+		blast_result_handle = open(blast_out) #read in blast result (in xml format)
 
 		#parse blast xml file
 		blast_results = NCBIXML.parse(blast_result_handle) #parse blast xml file
@@ -544,13 +616,16 @@ if args.blast:
 		for res in blast_results: #loop through the blast result query after query
 #			print res.ka_params
 #			print dir(res)
-			print "\nquery: %s" % res.query #the current query
+			if args.verbose:
+				print "\nquery: %s" % res.query #the current query
 			if not res.alignments:	#if no alignment was found for the query
-				print "no hit - done"
+				if args.verbose:
+					print "no hit - done"
 				processed.append(res.query)
 				nohit_count['no_hit'].append(res.query) #append the query id to the dictionary that contains all the nohit reads
 			elif (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) < args.min_ident) or res.alignments[0].hsps[0].bits < 80:
-				print "no significant hit - done"
+				if args.verbose:
+					print "no significant hit - done"
 				processed.append(res.query)
 				nohit_count['no_hit'].append(res.query) #append the query id to the dictionary that contains all the nohit reads
 
@@ -577,7 +652,8 @@ if args.blast:
 #							print "not recorded because a hit of %f is below the threshold of %f" % (hsp.bits, max_bit_score*0.9)
 			
 				if len(perfect_hit_taxids)==1:	#if the perfect hit dictionary contains only one key, that means that only one taxon has been hit perfectly
-					print "1 perfect match - done:\n%s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
+					if args.verbose:
+						print "1 perfect match - done:\n%s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
 					processed.append(res.query)
 #					print "query %s (cluster countains %i sequences) assigned to %s (%s; %s)" % (res.query, cluster_counts[res.query], perfect_hit_taxids.keys()[0], tax_dict[perfect_hit_taxids.keys()[0]][2], tax_dict[perfect_hit_taxids.keys()[0]][1])
 #					print "this should be species: %s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
@@ -592,7 +668,8 @@ if args.blast:
 #						print "no perfect matches"
 #						print hit_taxids
 						if len(hit_taxids)==1:	#if only one top 90% hit has been found
-							print "1 top90 match - done:\n%s" % tax_dict[hit_taxids.keys()[0]][2]
+							if args.verbose:
+								print "1 top90 match - done:\n%s" % tax_dict[hit_taxids.keys()[0]][2]
 							processed.append(res.query)
 #							print "query %s (cluster contains %i sequences) assigned to %s (%s; %s)" % (res.query, cluster_counts[res.query], hit_taxids.keys()[0], tax_dict[hit_taxids.keys()[0]][2], tax_dict[hit_taxids.keys()[0]][1])
 #							print "this should be species: %s" % tax_dict[hit_taxids.keys()[0]][2]
@@ -601,7 +678,8 @@ if args.blast:
 #							print "%i top90 matching species" % len(hit_taxids)
 							ambig_hits_taxids.update(hit_taxids)	#make this the list of taxids to be fed to the LCA part below
 
-					print "number of amgibuous hits: %i" % len(ambig_hits_taxids)
+					if args.verbose:
+						print "number of amgibuous hits: %i" % len(ambig_hits_taxids)
 					if len(ambig_hits_taxids)>0: #if the list contains more than one taxids, we attempt to identify the Lowest common ancestor
 #						print "identifying LCA"
 						tax_list = []	#defining variables
@@ -641,7 +719,8 @@ if args.blast:
 							if taxok == len(tax_list):
 								if len(parent_count)==1:
 #									print "query %s was assigned to LCA %s (%s; %s)" % (res.query, parent_count.keys()[0], tax_dict[parent_count.keys()[0]][2], tax_dict[parent_count.keys()[0]][1])
-									print "assigned to LCA - done\n%s" % tax_dict[parent_count.keys()[0]][2]
+									if args.verbose:
+										print "assigned to LCA - done\n%s" % tax_dict[parent_count.keys()[0]][2]
 									processed.append(res.query)
 #
 									if not taxonomy_count.has_key(tax_dict[parent_count.keys()[0]][1]): #if the taxonomic rank has not been encountert before:
@@ -684,9 +763,10 @@ if args.blast:
 							tax_list = []
 							parent_count = defaultdict(int)
 							if counter == len(tax_dict["tax_id"]):
-								print "no LCA could be found for query: %s" % res.query
+								if args.verbose:
+									print "no LCA could be found for query: %s" % res.query
 
-		print "number of clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
+#		print "number of clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
 		if len(processed)!=len(cluster_counts):	#final check
 			print "not all clusters were properly processed"
 			print "%i of %i" % (len(processed), len(cluster_counts))
@@ -699,6 +779,8 @@ if args.blast:
 		tax_dict["tax_id"].append("species")
 		tax_dict["tax_id"].insert(0,'nohit')
 
+
+		print "\n######## RESULT SUMMARY ########\n"
 		out=open(queryID+"-results.txt","w")
 		outstring="\nThe sample %s contained %i valid query sequences:\n" % (queryID, querycount[queryID])
 		print outstring
