@@ -74,7 +74,7 @@ blast_group = parser.add_argument_group('BLAST search', 'The parameters in this 
 blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
-parser.add_argument("--version", action="version", version='%(prog)s v.0.5')
+parser.add_argument("--version", action="version", version='%(prog)s v.0.6')
 args = parser.parse_args()
 
 ###FUNCITONS
@@ -85,6 +85,7 @@ def file_check(file_to_test, optional_message=None):
 		exit_message = "%s is not a valid file" %file_to_test
 		if optional_message:
 			exit_message = optional_message
+#		parser.print_help()
 		sys.exit(exit_message)
 	return True
 
@@ -126,24 +127,24 @@ def file_check(file_to_test, optional_message=None):
 
 
 ####START OF MAIN PROGRAM
-if not args.querylist:
-	print "\nmetabeat expects at least a query file\n"
+#if not args.querylist:
+#	print "\nmetabeat expects at least a query file\n"
+#	parser.print_help()
+#	sys.exit()
+
+if args.REFlist:
+	file_check(file_to_test=args.REFlist, optional_message="\nprovided reference file is not a valid file")
+else:
+	print "\nmetaBEAT expects at least a reference file\n"
 	parser.print_help()
 	sys.exit()
 
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
 
-if args.trim_adapter:
-	args.trim_adapter = os.path.abspath(args.trim_adapter)
-	if not os.path.isfile(args.trim_adapter):
-		print "adapter file is not a valid file"
-		sys.exit(0)
-
-file_check(file_to_test=args.REFlist, optional_message="no valid reference file supplied")
-
 if not os.path.isfile(args.REFlist):
 	print "no valid reference file supplied\n"
+	parser.print_help()
 	sys.exit(0)
 else:
 	refdata_files = [line.strip() for line in open(args.REFlist)]
@@ -165,46 +166,54 @@ else:
 			else:
 				references[refdata[0]] = refdata[1]
 
-if not os.path.isfile(args.querylist):
-        print "no valid query file supplied\n"
-        sys.exit(0)
-else:
-        query_files = [line.strip() for line in open(args.querylist)]
-	if not query_files:
-		print "query file is empty\n"
-		sys.exit(0)
-	for line in query_files:
-		querydata = line.split("\t")
-		if not len(querydata)>=3:
-			print "\nquery file is in incorrect format - we expect a tab delimited file:\n<sample_ID>\t<format>\t<file>\t<optional file>"
+if args.querylist:
+	if not os.path.isfile(args.querylist):
+	        print "no valid query file supplied\n"
+	        sys.exit(0)
+	else:
+	        query_files = [line.strip() for line in open(args.querylist)]
+		if not query_files:
+			print "query file is empty\n"
 			sys.exit(0)
-		else:
-			per_sample_query_format=""
-			per_sample_barcodes=[]
-			per_sample_query_files=[]
-#			print "processing sample: %s" %querydata[0]
-			if not informats.has_key(querydata[1]):
-				print "query file format for sample %s is invalid" % querydata[0]
-				per_sample_query_format=querydata[1]
-				sys.exit(0) 
-			for i in range(2,len(querydata)):
-				if re.match("^[ACTG]*$", querydata[i]):
-#					print "column %i looks like a barcode" %i
-					per_sample_barcodes.append(querydata[i])
-				else:
-					if not os.path.isfile(querydata[i]):
-						print "%s is not a valid file" %querydata[i]
-						sys.exit(0)
-					per_sample_query_files.append(os.path.abspath(querydata[i]))
-			
-			queries[querydata[0]]['format'] = querydata[1]
-			queries[querydata[0]]['files'] = per_sample_query_files
-			if per_sample_barcodes:
-#				print "barcodes %s found for sample %s" %("-".join(per_sample_barcodes), querydata[0])
-				queries[querydata[0]]['barcodes'] = per_sample_barcodes
-				files_to_barcodes["|".join(per_sample_query_files)]["-".join(per_sample_barcodes)] = querydata[0]
-#		print queries[querydata[0]]
-#		print files_to_barcodes
+		for line in query_files:
+			querydata = line.split("\t")
+			if not len(querydata)>=3:
+				print "\nquery file is in incorrect format - we expect a tab delimited file:\n<sample_ID>\t<format>\t<file>\t<optional file>"
+				sys.exit(0)
+			else:
+				per_sample_query_format=""
+				per_sample_barcodes=[]
+				per_sample_query_files=[]
+#				print "processing sample: %s" %querydata[0]
+				if not informats.has_key(querydata[1]):
+					print "query file format for sample %s is invalid" % querydata[0]
+					per_sample_query_format=querydata[1]
+					sys.exit(0) 
+				for i in range(2,len(querydata)):
+					if re.match("^[ACTG]*$", querydata[i]):
+#						print "column %i looks like a barcode" %i
+						per_sample_barcodes.append(querydata[i])
+					else:
+						if not os.path.isfile(querydata[i]):
+							print "%s is not a valid file" %querydata[i]
+							sys.exit(0)
+						per_sample_query_files.append(os.path.abspath(querydata[i]))
+				
+				queries[querydata[0]]['format'] = querydata[1]
+				queries[querydata[0]]['files'] = per_sample_query_files
+				if per_sample_barcodes:
+#					print "barcodes %s found for sample %s" %("-".join(per_sample_barcodes), querydata[0])
+					queries[querydata[0]]['barcodes'] = per_sample_barcodes
+					files_to_barcodes["|".join(per_sample_query_files)]["-".join(per_sample_barcodes)] = querydata[0]
+#			print queries[querydata[0]]
+#			print files_to_barcodes
+	if args.trim_adapter:
+		args.trim_adapter = os.path.abspath(args.trim_adapter)
+		if not os.path.isfile(args.trim_adapter):
+			print "adapter file is not a valid file"
+			parser.print_help()
+			sys.exit(0)
+
 #print len(queries)
 #print len(files_to_barcodes[files_to_barcodes.keys()[0]])
 #print files_to_barcodes
