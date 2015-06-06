@@ -55,7 +55,7 @@ elif [ $# -eq 2 ] && [ $2 != "--xt" ] || [ $# -eq 1 ]; then
 fi
 #
 echo "starting reprophylo container"
-sudo docker run --net=host --name mbnotebook -d -p 8888:8888 -e "PASSWORD=password" -v /tmp/.X11-unix:/tmp/.X11-unix:ro -v $1:/home/working -e DISPLAY=$DISPLAY chrishah/metabeat /notebook.sh
+sudo docker run --net=host --name mbnotebook -d -p 8888:8888 -e "PASSWORD=password" -v /tmp/.X11-unix:/tmp/.X11-unix:ro -v $1:/home/working -e DISPLAY=$DISPLAY chrishah/metabeat2 /notebook.sh
 #sudo docker run --net=host --name mbnotebook -d -p 8888:8888 -e "PASSWORD=password" -v /tmp/.X11-unix:/tmp/.X11-unix:ro -v $1:/notebooks -e DISPLAY=$DISPLAY chrishah/metabeat /notebook.sh
 echo
 #
