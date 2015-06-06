@@ -89,6 +89,22 @@ def file_check(file_to_test, optional_message=None):
 		sys.exit(exit_message)
 	return True
 
+def write_out_refs_to_fasta(ref_seqs):
+	print "write out reference sequences to refs.fasta\n"
+	OUT = open("refs.fasta","w")
+#	OUT_temp = open ("temp_refs.fasta","w")
+	for record in ref_seqs:
+#		outstring = ">%s\n%s" % (record.features[0].qualifiers['db_xref'][0].split(":")[1], record.seq) #note that the header of the sequence will be the taxid
+		outstring = ">%s|%s\n%s" % (record.id, record.features[0].qualifiers['db_xref'][0].split(":")[1], record.seq) #note that the header of the sequence will be the taxid
+		
+#		outstring2 = ">%s\n%s" % (record.id, record.seq)
+		OUT.write(outstring + "\n")
+#		OUT_temp.write(outstring2 + "\n")
+	OUT.close()
+#	OUT_temp.close()
+
+
+
 #def assess_file_format(infile, sep="\t", is_col_num=None, min_col_num=None, max_col_num=None, format_list=['genbank','gb','fasta','fa','ab1','ab1','fastq','fq'], columns=['sample','format','file','file','barcode','barcode'], ref=None, que=None):
 #	"The function checks for correct formatting of input file"
 #	if ref:
@@ -357,21 +373,12 @@ if args.seqinfo:
 	f.close()
 
 if args.fasta:	#this bit writes out the sequences that will become the reference dataset
-	print "write out reference sequences to refs.fasta\n"
-	OUT = open("refs.fasta","w")
-#	OUT_temp = open ("temp_refs.fasta","w")
-	for record in all_seqs:
-#		outstring = ">%s\n%s" % (record.features[0].qualifiers['db_xref'][0].split(":")[1], record.seq) #note that the header of the sequence will be the taxid
-		outstring = ">%s|%s\n%s" % (record.id, record.features[0].qualifiers['db_xref'][0].split(":")[1], record.seq) #note that the header of the sequence will be the taxid
-		
-		outstring2 = ">%s\n%s" % (record.id, record.seq)
-		OUT.write(outstring + "\n")
-#		OUT_temp.write(outstring2 + "\n")
-	OUT.close()
-#	OUT_temp.close()
+	write_out_refs_to_fasta(ref_seqs=all_seqs)
 
 if args.blast:
 	print "\n### BUILDING BLAST DATABASE ###\n"
+	if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
+		write_out_refs_to_fasta(ref_seqs=all_seqs)
 #	print "building blast db for marker %s\n" % args.marker
 	makeblastdb="makeblastdb -in refs.fasta -dbtype nucl -out %s_blast_db" % args.marker
 	print makeblastdb
@@ -812,7 +819,7 @@ if args.blast:
 								if args.verbose:
 									print "no LCA could be found for query: %s" % res.query
 
-		print "number of clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
+		print "number of queries/clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
 		if len(processed)!=len(cluster_counts):	#final check
 			print "not all clusters were properly processed"
 			print "%i of %i" % (len(processed), len(cluster_counts))
