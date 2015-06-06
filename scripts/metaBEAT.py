@@ -25,6 +25,7 @@ import shlex, subprocess
 ##############set this, or put a file called taxonomy.db in the same directory as the metaBEAT.py script############
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 #############################################################################
+VERSION="0.6"
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
 methods = []	#this list will contain the list of methods to be applied to the queries
 all_seqs = []
@@ -40,7 +41,8 @@ files_to_barcodes = defaultdict(dict)
 global_taxa = defaultdict(dict)
 query_count = 0
 global_taxids_hit = defaultdict(int)
-parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool')
+
+parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool', prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
 #parser = argparse.ArgumentParser(usage='%(prog)s [options] REFlist', formatter_class=RawTextHelpFormatter)
 
@@ -76,9 +78,13 @@ blast_group.add_argument("--www", help="perform online BLAST search against nt d
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
 phyloplace_group = parser.add_argument_group('Phylogenetic placement', 'The parameters in this group affect phylogenetic placement')
-phyloplace_group.add_argument("--refpkg", help="PATH to refpkg", type=int, metavar="<DIR>", action="store")
+phyloplace_group.add_argument("--refpkg", help="PATH to refpkg", metavar="<DIR>", action="store")
 
-parser.add_argument("--version", action="version", version='%(prog)s v.0.6')
+biom_group = parser.add_argument_group('BIOM OUTPUT','The arguments in this groups affect the output in BIOM format')
+biom_group.add_argument("-o","--output_prefix", help="prefix for BIOM output files (default='metaBEAT')", action="store", default="metaBEAT")
+biom_group.add_argument("--mock_meta_data", help="add mock metadata to the samples in the BIOM output", action="store_true")
+
+parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
 args = parser.parse_args()
 
 ###FUNCITONS
@@ -164,15 +170,16 @@ print "%s\n" % (' '.join(sys.argv))
 
 if args.phyloplace:
 	if not args.refpkg:
-		print "\nTo perform phylogenetic placement with pplacer metaBEAT currently expects a reference package to be specified via the --refpkg flag"
+		print "\nTo perform phylogenetic placement with pplacer metaBEAT currently expects a reference package to be specified via the --refpkg flag\n"
 		parser.print_help()
 		sys.exit()
 	
 	if not os.path.isdir(args.refpkg):
-		print "\nThe specified reference package does not seem to be valid"
+		print "\nThe specified reference package does not seem to be valid\n"
 		sys.exit()
-	
-	
+	if not args.blast:
+		print "\nPhylogenetic placement currently requires a blast search first to determine the set of queries for which phylogenetic placement is attempted - add the --blast flag to your command\n"
+		sys.exit()	
 
 if not os.path.isfile(args.REFlist):
 	print "no valid reference file supplied\n"
@@ -587,8 +594,8 @@ if args.blast or args.phyloplace:
 			queryfile = queries[queryID]['files'][0]
 
 		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
-		unknown_seqs=list(SeqIO.parse(queryfile,'fasta'))	#read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
-		querycount[queryID] += len(unknown_seqs)
+#		unknown_seqs=list(SeqIO.parse(queryfile,'fasta'))	#read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
+		querycount[queryID] += len(unknown_seqs_dict)
 
 		
 		cluster_counts = {}
@@ -638,325 +645,334 @@ if args.blast or args.phyloplace:
 			print "vsearch identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i records per cluster) are used in subsequent analyses\n" % (all_clust_count, float(args.clust_match), len(cluster_counts), args.clust_cov)
 			queryfile = "%s_centroids.fasta" % queryID
 		else:
-			for sequence in unknown_seqs:
+			for sequence in unknown_seqs_dict.keys():
 #				print sequence
-				cluster_counts[sequence.description] = 1
-				cluster_reads[sequence.description] = [sequence.description]
+				cluster_counts[unknown_seqs_dict[sequence].description] = 1
+				cluster_reads[unknown_seqs_dict[sequence].description] = [unknown_seqs_dict[sequence].description]
 
 #		print "BEFORE BLAST"
 #		print cluster_counts
 #		print cluster_reads
 		#running blast search against previously build database
-		blast_db = "../%s_blast_db" % args.marker
+		blast_db = "../../%s_blast_db" % args.marker
 		blast_out = "%s_%s_blastn.out.xml" % (args.marker, queryID)
 
-
+		some_hit = []	#This list will contain the ids of all queries that get a blast hit, i.e. even if it is non-signficant given the user specfied thresholds. For this set of reads we will attempt phylogenetic placement. No point of even trying if they dont get any blast hit.
 		for approach in methods:
 			if approach == 'pplacer':
 				print "\n### RUNNING PHYLOGENETIC PLACEMENT ###\n"
+				if not os.path.exists('PHYLOPLACE'):
+					os.makedirs('PHYLOPLACE')
+				os.chdir('PHYLOPLACE')
+				print "number of reads to be processed in phylogenetic placement: %i" %len(some_hit)
+				print some_hit
 				sys.exit()
 			elif approach == 'blast':
+				if not os.path.exists('BLAST'):
+					os.makedirs('BLAST')
+				os.chdir('BLAST')
 				print "\n### RUNNING LOCAL BLAST ###\n"
 
-		print "\n### RUNNING LOCAL BLAST ###\n"
-		print "running blast search against local database %s" % blast_db
-		blast_cmd = "blastn -query %s -db %s -evalue 0.001 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, blast_out, args.n_threads) 
-		print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
+				print "running blast search against local database %s" % blast_db
+				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, blast_out, args.n_threads) 
+				print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
 
 
-		blast_cmd = "blastn -query %s -db %s -evalue 0.001 -out %s -num_threads %i" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
-		cmdlist = shlex.split(blast_cmd)
-		stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
+				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -out %s -num_threads %i" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
+				cmdlist = shlex.split(blast_cmd)
+				stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
 
 
-		blast_handle = NcbiblastxCommandline(cmd='blastn', query=queryfile, db=blast_db, evalue=0.001, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
-		stdout, stderr = blast_handle()
+				blast_handle = NcbiblastxCommandline(cmd='blastn', query=queryfile, db=blast_db, evalue=0.001, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
+				stdout, stderr = blast_handle()
 
 
-		print "\n### INTERPRETING BLAST RESULTS ###\n"
-		blast_result_handle = open(blast_out) #read in blast result (in xml format)
+				print "\n### INTERPRETING BLAST RESULTS ###\n"
+				blast_result_handle = open(blast_out) #read in blast result (in xml format)
 
-		#parse blast xml file
-		blast_results = NCBIXML.parse(blast_result_handle) #parse blast xml file
+				#parse blast xml file
+				blast_results = NCBIXML.parse(blast_result_handle) #parse blast xml file
 		
-		processed=[]
-		for res in blast_results: #loop through the blast result query after query
-#			print res.ka_params
-#			print dir(res)
-			if args.verbose:
-				print "\nquery: %s" % res.query #the current query
-			if not res.alignments:	#if no alignment was found for the query
-				if args.verbose:
-					print "no hit - done"
-				processed.append(res.query)
-				nohit_count['no_hit'].append(res.query) #append the query id to the dictionary that contains all the nohit reads
-			elif (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) < args.min_ident) or res.alignments[0].hsps[0].bits < 80:
-				if args.verbose:
-					print "no significant hit - done"
-				processed.append(res.query)
-				nohit_count['no_hit'].append(res.query) #append the query id to the dictionary that contains all the nohit reads
-
-			else: #if a hit has been found
-				max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
-#				print max_bit_score
-#				print "%f" % (max_bit_score*0.9)
-				hit_taxids = defaultdict(int)	#define dictionaries
-				perfect_hit_taxids = defaultdict(int)
-				ambig_hits_taxids = defaultdict(int)
-
-				for alignment in res.alignments: #for each hit of the current query
-					for hsp in alignment.hsps:	#for each alignment the parser creates a list through which we loop here
-						perc_ident = 100*hsp.identities/float(res.query_letters)	#calculate percent identity
-						if (res.alignments[0].hsps[0].identities == len(res.alignments[0].hsps[0].query) and (res.query_letters==hsp.identities)):	#if the query length is equal to the number of hit bases, we have a perfect match
-#							perfect_hit_taxids[alignment.title.split(" ")[1]] += 1	#count the number of perfect hits to a given taxon, the name (which is the taxid of the taxon, because I have build the database using taxids as sequence headers) is recorded in the alignment.title after the first space
-							perfect_hit_taxids[alignment.title.split(" ")[1].split("|")[1]] += 1
-#							print "perfect hit recorded "
-						if hsp.bits > (max_bit_score*0.9): # and (float(hsp.identities)/len(hsp.query)*100) > 95:	#if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
-#							hit_taxids[alignment.title.split(" ")[1]] += 1	#count the number of top90 hits to a given taxon
-							hit_taxids[alignment.title.split(" ")[1].split("|")[1]] += 1	#count the number of top90 hits to a given taxon
-#							print "top 90 hit recorded"
-#						else:
-#							print "not recorded because a hit of %f is below the threshold of %f" % (hsp.bits, max_bit_score*0.9)
-			
-				if len(perfect_hit_taxids)==1:	#if the perfect hit dictionary contains only one key, that means that only one taxon has been hit perfectly
+				processed=[]
+				for res in blast_results: #loop through the blast result query after query
+#					print res.ka_params
+#					print dir(res)
 					if args.verbose:
-						print "1 perfect match - done:\n%s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
-
-#					print perfect_hit_taxids.keys()[0]
-					global_taxids_hit[perfect_hit_taxids.keys()[0]] += 1
-					processed.append(res.query)
-#					print "query %s (cluster countains %i sequences) assigned to %s (%s; %s)" % (res.query, cluster_counts[res.query], perfect_hit_taxids.keys()[0], tax_dict[perfect_hit_taxids.keys()[0]][2], tax_dict[perfect_hit_taxids.keys()[0]][1])
-#					print "this should be species: %s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
-					species_count[tax_dict[perfect_hit_taxids.keys()[0]][2]].append(res.query) #add the perfect hit, which is bound to be a species to a dictionary. The key is the species name (which is fetched from the tax_dict dictionary based on the taxid) and the id of the query that had a perfect hit will be added to a list in the value of the dictionary
-				else:	#if the perfect hit dictionary contains zero or more than one keys, i.e. more than one species in the database had perfect hits
-#					print "reached ambiguous hits"
-					if len(perfect_hit_taxids)>1:	#if more than one taxids had perfect hits
-#						print "%i perfect matches" % len(perfect_hit_taxids)
-#						print perfect_hit_taxids
-						ambig_hits_taxids.update(perfect_hit_taxids)	#make the list of perfectly hitting taxids the current list to be fed into the LCA part below
-					else:	#if no perfect hit had been found
-#						print "no perfect matches"
-#						print hit_taxids
-						if len(hit_taxids)==1:	#if only one top 90% hit has been found
+						print "\nquery: %s" % res.query #the current query
+					if not res.alignments:	#if no alignment was found for the query
+						if args.verbose:
+							print "no hit - done"
+						processed.append(res.query)
+						nohit_count['no_hit'].append(res.query) #append the query id to the dictionary that contains all the nohit reads
+					elif (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) < args.min_ident) or res.alignments[0].hsps[0].bits < 80:
+						some_hit.append(res.query)	#record the query id even if its not a significant blast hit. These sequences will be included for phylogenetic placement 
+						if args.verbose:
+							print "no significant hit - done"
+						processed.append(res.query)
+						nohit_count['no_hit'].append(res.query) #append the query id to the dictionary that contains all the nohit reads
+						
+					else: #if a hit has been found
+						some_hit.append(res.query)
+						max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
+#						print max_bit_score
+#						print "%f" % (max_bit_score*0.9)
+						hit_taxids = defaultdict(int)	#define dictionaries
+						perfect_hit_taxids = defaultdict(int)
+						ambig_hits_taxids = defaultdict(int)
+		
+						for alignment in res.alignments: #for each hit of the current query
+							for hsp in alignment.hsps:	#for each alignment the parser creates a list through which we loop here
+								perc_ident = 100*hsp.identities/float(res.query_letters)	#calculate percent identity
+								if (res.alignments[0].hsps[0].identities == len(res.alignments[0].hsps[0].query) and (res.query_letters==hsp.identities)):	#if the query length is equal to the number of hit bases, we have a perfect match
+#									perfect_hit_taxids[alignment.title.split(" ")[1]] += 1	#count the number of perfect hits to a given taxon, the name (which is the taxid of the taxon, because I have build the database using taxids as sequence headers) is recorded in the alignment.title after the first space
+									perfect_hit_taxids[alignment.title.split(" ")[1].split("|")[1]] += 1
+#									print "perfect hit recorded "
+								if hsp.bits > (max_bit_score*0.9): # and (float(hsp.identities)/len(hsp.query)*100) > 95:	#if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
+#									hit_taxids[alignment.title.split(" ")[1]] += 1	#count the number of top90 hits to a given taxon
+									hit_taxids[alignment.title.split(" ")[1].split("|")[1]] += 1	#count the number of top90 hits to a given taxon
+#									print "top 90 hit recorded"
+#								else:
+#									print "not recorded because a hit of %f is below the threshold of %f" % (hsp.bits, max_bit_score*0.9)
+					
+						if len(perfect_hit_taxids)==1:	#if the perfect hit dictionary contains only one key, that means that only one taxon has been hit perfectly
 							if args.verbose:
-								print "1 top90 match - done:\n%s" % tax_dict[hit_taxids.keys()[0]][2]
-
-#							print hit_taxids.keys()[0]
-							global_taxids_hit[hit_taxids.keys()[0]] += 1
+								print "1 perfect match - done:\n%s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
+		
+#							print perfect_hit_taxids.keys()[0]
+							global_taxids_hit[perfect_hit_taxids.keys()[0]] += 1
 							processed.append(res.query)
-#							print "query %s (cluster contains %i sequences) assigned to %s (%s; %s)" % (res.query, cluster_counts[res.query], hit_taxids.keys()[0], tax_dict[hit_taxids.keys()[0]][2], tax_dict[hit_taxids.keys()[0]][1])
-#							print "this should be species: %s" % tax_dict[hit_taxids.keys()[0]][2]
-							species_count[tax_dict[hit_taxids.keys()[0]][2]].append(res.query) #add the one top90 hit to a dictionary. The key is the species name (which is fetched from the tax_dict dictionary based on the taxid) and the id of the query that had a perfect hit will be added to a list in the value of the dictionary
-						else:	#if more than one top90 hits were found
-#							print "%i top90 matching species" % len(hit_taxids)
-							ambig_hits_taxids.update(hit_taxids)	#make this the list of taxids to be fed to the LCA part below
-
-					if args.verbose:
-						print "number of amgibuous hits: %i" % len(ambig_hits_taxids)
-					if len(ambig_hits_taxids)>0: #if the list contains more than one taxids, we attempt to identify the Lowest common ancestor
-#						print "identifying LCA"
-						tax_list = []	#defining variables
-						parent_count = defaultdict(int)
-						counter=1
-						no_species_hit = defaultdict(int)
-					
-						for counter in range(len(tax_dict["tax_id"])):
-#						while counter <= len(tax_dict["tax_id"]): #loop through the taxonomic levels encountert (see tax_dict has been generated with taxtastic above). The key "tax_id" contains a list of taxonomic ranks
-							counter += 1
-#							print counter
-							index=counter*-1
-#							print "current index: %i" % index
-							for hit,count in ambig_hits_taxids.items(): #generate a list of taxids that have been hit and were retained by the above criteria
-#								print "%s: %s" % (tax_dict[hit][2], count)
-								tax_list.extend([hit])
-	
-#							print "list of taxids to be included in LCA analysis:\n%s" % tax_list
-
-							taxok=int(0)
-							for tax in tax_list: #for every taxid in the list
-#								print "taxon: %s; taxid at level %i: %s" % ( tax, counter, tax_dict[tax][index])
-								if tax_dict[tax][index]: 
-								#we access the tax_dict dictionary using the taxid as the key, the value is a list, which contains taxids 
-								#for the parents of the current taxid. The last element in the list is a taxid at species level, the next to last
-								#contains a taxid for the corresponding genus level, the next to that the taxid for family and so on
-								#as you go to higher taxonomic levels some levels will be empty because in one lineage there is subfamily rank
-								#and in the other this field is just empty.
-								#Here I just check if there is valid taxids at the current taxonomic level (via the index which reads through the list backwards
-								#for each of the taxids in the list
-									taxok += 1
-									parent_count[tax_dict[tax][index]] += 1
-#								else:
-#									print "empty"
-
-#							print "number of valid unique taxids: %i" % len(parent_count)
-							if taxok == len(tax_list):
-								if len(parent_count)==1:
-#									print "query %s was assigned to LCA %s (%s; %s)" % (res.query, parent_count.keys()[0], tax_dict[parent_count.keys()[0]][2], tax_dict[parent_count.keys()[0]][1])
+#							print "query %s (cluster countains %i sequences) assigned to %s (%s; %s)" % (res.query, cluster_counts[res.query], perfect_hit_taxids.keys()[0], tax_dict[perfect_hit_taxids.keys()[0]][2], tax_dict[perfect_hit_taxids.keys()[0]][1])
+#							print "this should be species: %s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
+							species_count[tax_dict[perfect_hit_taxids.keys()[0]][2]].append(res.query) #add the perfect hit, which is bound to be a species to a dictionary. The key is the species name (which is fetched from the tax_dict dictionary based on the taxid) and the id of the query that had a perfect hit will be added to a list in the value of the dictionary
+						else:	#if the perfect hit dictionary contains zero or more than one keys, i.e. more than one species in the database had perfect hits
+#							print "reached ambiguous hits"
+							if len(perfect_hit_taxids)>1:	#if more than one taxids had perfect hits
+#								print "%i perfect matches" % len(perfect_hit_taxids)
+#								print perfect_hit_taxids
+								ambig_hits_taxids.update(perfect_hit_taxids)	#make the list of perfectly hitting taxids the current list to be fed into the LCA part below
+							else:	#if no perfect hit had been found
+#								print "no perfect matches"
+#								print hit_taxids
+								if len(hit_taxids)==1:	#if only one top 90% hit has been found
 									if args.verbose:
-										print "assigned to LCA - done\n%s" % tax_dict[parent_count.keys()[0]][2]
-										
-#									print parent_count.keys()[0]
-									global_taxids_hit[parent_count.keys()[0]] += 1
+										print "1 top90 match - done:\n%s" % tax_dict[hit_taxids.keys()[0]][2]
+		
+#									print hit_taxids.keys()[0]
+									global_taxids_hit[hit_taxids.keys()[0]] += 1
 									processed.append(res.query)
+#									print "query %s (cluster contains %i sequences) assigned to %s (%s; %s)" % (res.query, cluster_counts[res.query], hit_taxids.keys()[0], tax_dict[hit_taxids.keys()[0]][2], tax_dict[hit_taxids.keys()[0]][1])
+#									print "this should be species: %s" % tax_dict[hit_taxids.keys()[0]][2]
+									species_count[tax_dict[hit_taxids.keys()[0]][2]].append(res.query) #add the one top90 hit to a dictionary. The key is the species name (which is fetched from the tax_dict dictionary based on the taxid) and the id of the query that had a perfect hit will be added to a list in the value of the dictionary
+								else:	#if more than one top90 hits were found
+#									print "%i top90 matching species" % len(hit_taxids)
+									ambig_hits_taxids.update(hit_taxids)	#make this the list of taxids to be fed to the LCA part below
+
+							if args.verbose:
+								print "number of amgibuous hits: %i" % len(ambig_hits_taxids)
+							if len(ambig_hits_taxids)>0: #if the list contains more than one taxids, we attempt to identify the Lowest common ancestor
+#								print "identifying LCA"
+								tax_list = []	#defining variables
+								parent_count = defaultdict(int)
+								counter=1
+								no_species_hit = defaultdict(int)
+							
+								for counter in range(len(tax_dict["tax_id"])):
+#								while counter <= len(tax_dict["tax_id"]): #loop through the taxonomic levels encountert (see tax_dict has been generated with taxtastic above). The key "tax_id" contains a list of taxonomic ranks
+									counter += 1
+#									print counter
+									index=counter*-1
+#									print "current index: %i" % index
+									for hit,count in ambig_hits_taxids.items(): #generate a list of taxids that have been hit and were retained by the above criteria
+#										print "%s: %s" % (tax_dict[hit][2], count)
+										tax_list.extend([hit])
+			
+#									print "list of taxids to be included in LCA analysis:\n%s" % tax_list
+
+									taxok=int(0)
+									for tax in tax_list: #for every taxid in the list
+#										print "taxon: %s; taxid at level %i: %s" % ( tax, counter, tax_dict[tax][index])
+										if tax_dict[tax][index]: 
+										#we access the tax_dict dictionary using the taxid as the key, the value is a list, which contains taxids 
+										#for the parents of the current taxid. The last element in the list is a taxid at species level, the next to last
+										#contains a taxid for the corresponding genus level, the next to that the taxid for family and so on
+										#as you go to higher taxonomic levels some levels will be empty because in one lineage there is subfamily rank
+										#and in the other this field is just empty.
+										#Here I just check if there is valid taxids at the current taxonomic level (via the index which reads through the list backwards
+										#for each of the taxids in the list
+											taxok += 1
+											parent_count[tax_dict[tax][index]] += 1
+#										else:
+#											print "empty"
+		
+#									print "number of valid unique taxids: %i" % len(parent_count)
+									if taxok == len(tax_list):
+										if len(parent_count)==1:
+#											print "query %s was assigned to LCA %s (%s; %s)" % (res.query, parent_count.keys()[0], tax_dict[parent_count.keys()[0]][2], tax_dict[parent_count.keys()[0]][1])
+											if args.verbose:
+												print "assigned to LCA - done\n%s" % tax_dict[parent_count.keys()[0]][2]
+												
+#											print parent_count.keys()[0]
+											global_taxids_hit[parent_count.keys()[0]] += 1
+											processed.append(res.query)
 #
-									if not taxonomy_count.has_key(tax_dict[parent_count.keys()[0]][1]): #if the taxonomic rank has not been encountert before:
-#										print "taxonomic rank %s has not been encountert before" % tax_dict[parent_count.keys()[0]][1]
-#										print "ading new empty dictionary %s" % tax_dict[parent_count.keys()[0]][1]
-										
-										taxonomy_count[tax_dict[parent_count.keys()[0]][1]] = defaultdict(list) #empty dictionary
-										taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
-										
-#This worked for counts								taxonomy_count[tax_dict[parent_count.keys()[0]][1]] = defaultdict(int) #empty dictionary
-#This worked for counts								taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
+											if not taxonomy_count.has_key(tax_dict[parent_count.keys()[0]][1]): #if the taxonomic rank has not been encountert before:
+#												print "taxonomic rank %s has not been encountert before" % tax_dict[parent_count.keys()[0]][1]
+#												print "ading new empty dictionary %s" % tax_dict[parent_count.keys()[0]][1]
+												
+												taxonomy_count[tax_dict[parent_count.keys()[0]][1]] = defaultdict(list) #empty dictionary
+												taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
+												
+#This worked for counts										taxonomy_count[tax_dict[parent_count.keys()[0]][1]] = defaultdict(int) #empty dictionary
+#This worked for counts										taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
 
-#										print "level 1: %s" % taxonomy_count.keys()
-									#	for rank in taxonomy_count.keys():
-#											print "level 2 (key: %s): %s" % (rank, taxonomy_count[rank].keys())
-									#		for count in taxonomy_count[rank].keys():
-#												print "level 3 (key %s): %s" % (count, taxonomy_count[rank][count])
-									else:
-#										print "I have seen rank %s before" % ( tax_dict[parent_count.keys()[0]][1] )
-#										print "currently the rank %s contains the following keys: %s" % ( tax_dict[parent_count.keys()[0]][1], taxonomy_count[tax_dict[parent_count.keys()[0]][1]].keys())
-#										print "check if the rank %s already contains the key: %s" % (tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2] )
-										if not taxonomy_count[tax_dict[parent_count.keys()[0]][1]].has_key(tax_dict[parent_count.keys()[0]][2]):
-#											print "not found"
-#											print "adding new key %s to rank %s" % ( tax_dict[parent_count.keys()[0]][2], tax_dict[parent_count.keys()[0]][1])
-#This worked for counts									taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
-											taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
-										else:
-#											print "found"
-#											print "current count for rank %s, key %s is: %s" % ( tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2], taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] )
-#											print "add %i to count" % cluster_counts[res.query]
-#This worked for counts									taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
-											taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
-#											print "afterwards count for rank %s, key %s is: %s" % ( tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2], taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] )
-#										print taxonomy_count
+#												print "level 1: %s" % taxonomy_count.keys()
+											#	for rank in taxonomy_count.keys():
+#													print "level 2 (key: %s): %s" % (rank, taxonomy_count[rank].keys())
+											#		for count in taxonomy_count[rank].keys():
+#														print "level 3 (key %s): %s" % (count, taxonomy_count[rank][count])
+											else:
+#												print "I have seen rank %s before" % ( tax_dict[parent_count.keys()[0]][1] )
+#												print "currently the rank %s contains the following keys: %s" % ( tax_dict[parent_count.keys()[0]][1], taxonomy_count[tax_dict[parent_count.keys()[0]][1]].keys())
+#												print "check if the rank %s already contains the key: %s" % (tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2] )
+												if not taxonomy_count[tax_dict[parent_count.keys()[0]][1]].has_key(tax_dict[parent_count.keys()[0]][2]):
+#													print "not found"
+#													print "adding new key %s to rank %s" % ( tax_dict[parent_count.keys()[0]][2], tax_dict[parent_count.keys()[0]][1])
+#This worked for counts											taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
+													taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
+												else:
+#													print "found"
+#													print "current count for rank %s, key %s is: %s" % ( tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2], taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] )
+#													print "add %i to count" % cluster_counts[res.query]
+#This worked for counts											taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
+													taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
+#													print "afterwards count for rank %s, key %s is: %s" % ( tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2], taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] )
+#												print taxonomy_count
 
-									break #if LCA is found break out of loop
-#								else:
-#									print "There was at least one invalid taxid encountert at this level"
-#							counter += 1
-#							print "no LCA found at level %i" % counter
-							tax_list = []
-							parent_count = defaultdict(int)
-							if counter == len(tax_dict["tax_id"]):
-								if args.verbose:
-									print "no LCA could be found for query: %s" % res.query
+											break #if LCA is found break out of loop
+#										else:
+#											print "There was at least one invalid taxid encountert at this level"
+#									counter += 1
+#									print "no LCA found at level %i" % counter
+									tax_list = []
+									parent_count = defaultdict(int)
+									if counter == len(tax_dict["tax_id"]):
+										if args.verbose:
+											print "no LCA could be found for query: %s" % res.query
 
-		print "number of queries/clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
-		if len(processed)!=len(cluster_counts):	#final check
-			print "not all clusters were properly processed"
-			print "%i of %i" % (len(processed), len(cluster_counts))
+				print "number of queries/clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
+				if len(processed)!=len(cluster_counts):	#final check
+					print "not all clusters were properly processed"
+					print "%i of %i" % (len(processed), len(cluster_counts))
 
-		taxonomy_count['species'] = species_count
-		taxonomy_count['nohit'] = nohit_count
-#		print "\nThe final dictionary"
-#		print taxonomy_count
-#		print
-#		tax_dict["tax_id"].append("species")
-		tax_dict["tax_id"].insert(0,'nohit')
-
-
-		print "\n######## RESULT SUMMARY ########\n"
-		out=open(queryID+"-results.txt","w")
-		outstring="\nThe sample %s contained %i valid query sequences:\n" % (queryID, querycount[queryID])
-		print outstring
-		out.write(outstring+"\n")
+				taxonomy_count['species'] = species_count
+				taxonomy_count['nohit'] = nohit_count
+#				print "\nThe final dictionary"
+#				print taxonomy_count
+#				print
+#				tax_dict["tax_id"].append("species")
+				tax_dict["tax_id"].insert(0,'nohit')
 
 
-#		print tax_dict['tax_id']
-		for tax_rank in reversed(tax_dict["tax_id"]):
-#			print tax_rank
-			if taxonomy_count.has_key(tax_rank):
-				total_per_rank_count=int(0)
-				output=[]
-				for hit in sorted(taxonomy_count[tax_rank].keys()):
-
-#					print "\t%s: %i" % (hit, len(taxonomy_count[tax_rank][hit])) #This is the count of unique clusters that were assigned
-					current_count=int(0)
-					current_reads=[]
-					for read in taxonomy_count[tax_rank][hit]:
-#						print "centroid: %s" % read
-#						print "read count in cluster: %i" % cluster_counts[read]
-						current_count+=cluster_counts[read]	#sum up the number of actual reads in the clusters assigned to this taxon
-						if args.extract_centroid_reads:
-							current_reads.append(read)
-
-						elif args.extract_all_reads:
-							current_reads.extend(cluster_reads[read])
-
-						total_per_rank_count+=cluster_counts[read]
-					output.append("\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID]))
-#					print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
-
-
-					#### add data to global data
-					if not global_taxa[tax_rank].has_key(hit):
-						global_taxa[tax_rank][hit] = []
-						if query_count >= 1: #if this is already the 2+ query and the taxon has not been seen so far, I need to fill up the previous samples with count 0 for this taxon
-							for i in range(query_count-1):
-								global_taxa[tax_rank][hit].append(int(0))
-						global_taxa[tax_rank][hit].append(int(current_count))
-					else:
-						global_taxa[tax_rank][hit].append((current_count))
-					
-					### print out reads
-					if current_reads: #This list is only non empty if either -e or -E was specified
-#						
-						if args.extract_centroid_reads:	#if the user has specified to extract centroid reads
-							#the following will sort the read ids by the number of reads in the respective cluster
-							temp_dict = defaultdict(list) #temporal dictionary 
-							for ID in current_reads:	#populate temporal dictionary with read counts as keys and centroid ids as values in a list (in case there are clusters that happen to have the same number of reads
-								temp_dict[cluster_counts[unknown_seqs_dict[ID].id]].append(ID)
-#								print "%s: %s" %(cluster_counts[unknown_seqs_dict[ID].id], ID)
-								
-							current_reads=[]	#empty the original list
-							for count in sorted(temp_dict.keys(), key=int, reverse=True):	#loop through the temporal dictionary reverse sorted by keys
-#								print temp_dict[count]
-								for read in temp_dict[count]:	#because the read ids are in a list I ll loop through here
-#									print "%s: %s" %(count, read)
-									current_reads.append(read)	#put the read ids back into the list sorted in descending order of the number reads in the respective clusters
-								
-
-						fas_out = open(hit.replace(" ", "_")+'.fasta',"w")
-						for ID in current_reads:
-							unknown_seqs_dict[ID].description = "%s|%s" %(queryID, unknown_seqs_dict[ID].id)
-							if args.extract_centroid_reads:
-								unknown_seqs_dict[ID].id = "%s|%s|%i|%.2f" % (queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-								unknown_seqs_dict[ID].description = unknown_seqs_dict[ID].id
-#							print unknown_seqs_dict[ID]
-							fas_out.write(unknown_seqs_dict[ID].format("fasta"))
-#							fas_out.write(">%s|%i\n%s\n" % ( unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], unknown_seqs_dict[ID].seq ))
-						fas_out.close()
-
-				outstring="%s: %i (%.2f %%)" % (tax_rank, total_per_rank_count, 100*float(total_per_rank_count)/querycount[queryID])
+				print "\n######## RESULT SUMMARY ########\n"
+				out=open(queryID+"-results.txt","w")
+				outstring="\nThe sample %s contained %i valid query sequences:\n" % (queryID, querycount[queryID])
 				print outstring
 				out.write(outstring+"\n")
-				if tax_rank!='nohit':
-					for line in output:
-						print line
-						out.write(line+"\n")
 
-		out.close()
-		print "\n\n"	
-		os.chdir("../")
-		del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
-#		del tax_dict["tax_id"][-1] #remove the last element, i.e. 'species'
+
+#				print tax_dict['tax_id']
+				for tax_rank in reversed(tax_dict["tax_id"]):
+#					print tax_rank
+					if taxonomy_count.has_key(tax_rank):
+						total_per_rank_count=int(0)
+						output=[]
+						for hit in sorted(taxonomy_count[tax_rank].keys()):
+
+#							print "\t%s: %i" % (hit, len(taxonomy_count[tax_rank][hit])) #This is the count of unique clusters that were assigned
+							current_count=int(0)
+							current_reads=[]
+							for read in taxonomy_count[tax_rank][hit]:
+#								print "centroid: %s" % read
+#								print "read count in cluster: %i" % cluster_counts[read]
+								current_count+=cluster_counts[read]	#sum up the number of actual reads in the clusters assigned to this taxon
+								if args.extract_centroid_reads:
+									current_reads.append(read)
+
+								elif args.extract_all_reads:
+									current_reads.extend(cluster_reads[read])
+
+								total_per_rank_count+=cluster_counts[read]
+							output.append("\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID]))
+#							print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
+
+
+							#### add data to global data
+							if not global_taxa[tax_rank].has_key(hit):
+								global_taxa[tax_rank][hit] = []
+								if query_count >= 1: #if this is already the 2+ query and the taxon has not been seen so far, I need to fill up the previous samples with count 0 for this taxon
+									for i in range(query_count-1):
+										global_taxa[tax_rank][hit].append(int(0))
+								global_taxa[tax_rank][hit].append(int(current_count))
+							else:
+								global_taxa[tax_rank][hit].append((current_count))
+							
+							### print out reads
+							if current_reads: #This list is only non empty if either -e or -E was specified
+#								
+								if args.extract_centroid_reads:	#if the user has specified to extract centroid reads
+									#the following will sort the read ids by the number of reads in the respective cluster
+									temp_dict = defaultdict(list) #temporal dictionary 
+									for ID in current_reads:	#populate temporal dictionary with read counts as keys and centroid ids as values in a list (in case there are clusters that happen to have the same number of reads
+										temp_dict[cluster_counts[unknown_seqs_dict[ID].id]].append(ID)
+#										print "%s: %s" %(cluster_counts[unknown_seqs_dict[ID].id], ID)
+										
+									current_reads=[]	#empty the original list
+									for count in sorted(temp_dict.keys(), key=int, reverse=True):	#loop through the temporal dictionary reverse sorted by keys
+#										print temp_dict[count]
+										for read in temp_dict[count]:	#because the read ids are in a list I ll loop through here
+#											print "%s: %s" %(count, read)
+											current_reads.append(read)	#put the read ids back into the list sorted in descending order of the number reads in the respective clusters
+										
+
+								fas_out = open(hit.replace(" ", "_")+'.fasta',"w")
+								for ID in current_reads:
+									unknown_seqs_dict[ID].description = "%s|%s" %(queryID, unknown_seqs_dict[ID].id)
+									if args.extract_centroid_reads:
+										unknown_seqs_dict[ID].id = "%s|%s|%i|%.2f" % (queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+										unknown_seqs_dict[ID].description = unknown_seqs_dict[ID].id
+#									print unknown_seqs_dict[ID]
+									fas_out.write(unknown_seqs_dict[ID].format("fasta"))
+#									fas_out.write(">%s|%i\n%s\n" % ( unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], unknown_seqs_dict[ID].seq ))
+								fas_out.close()
+
+						outstring="%s: %i (%.2f %%)" % (tax_rank, total_per_rank_count, 100*float(total_per_rank_count)/querycount[queryID])
+						print outstring
+						out.write(outstring+"\n")
+						if tax_rank!='nohit':
+							for line in output:
+								print line
+								out.write(line+"\n")
+
+				out.close()
+				print "\n\n"	
+				os.chdir("../")	#leave directory of current analysis
+				del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
+#				del tax_dict["tax_id"][-1] #remove the last element, i.e. 'species'
 		
-		print '\n'+time.strftime("%c")+'\n'
+				print '\n'+time.strftime("%c")+'\n'
 
-		####this is the end
-#		print "\nTHIS IS THE END"
-#		print '%s: %s' %(queryID,queries[queryID])
-#		print global_taxa
+				####this is the end
+#				print "\nTHIS IS THE END"
+#				print '%s: %s' %(queryID,queries[queryID])
+#				print global_taxa
 
-		for rank in global_taxa: #this is just to make sure that all taxa have the same number of counts
-			for taxon in global_taxa[rank]:
-				if len(global_taxa[rank][taxon]) < query_count:	#if the number of entries for the current taxon is smaller than the current index
-					global_taxa[rank][taxon].append(int(0))
+				for rank in global_taxa: #this is just to make sure that all taxa have the same number of counts
+					for taxon in global_taxa[rank]:
+						if len(global_taxa[rank][taxon]) < query_count:	#if the number of entries for the current taxon is smaller than the current index
+							global_taxa[rank][taxon].append(int(0))
 
-#		print "TAXIDS hit by query %s: %s" %(queryID, global_taxids_hit)
-
+#				print "TAXIDS hit by query %s: %s" %(queryID, global_taxids_hit)
+		os.chdir('../')	#leave directory for query
 
 if args.blast or args.phyloplace:
 
@@ -978,24 +994,30 @@ if args.blast or args.phyloplace:
 	data = np.asarray(data_to_biom)
 	#print "data:\n%s" %data
 	#print len(data)
-	
-	sample_ids = sorted(queries.keys())
-	#print "sample_ids:\n%s" %sample_ids
+
+	sample_ids = []	
+	for key in sorted(queries.keys()):
+#		print key
+		for met in methods:
+#			print met
+			sample_ids.append(key+"."+met)
+#	print "sample_ids:\n%s" %sample_ids
 	#print len(sample_ids)
 
 	sample_metadata=[]
-	#if args.mock_meta:
 	for q in sample_ids:
+		temp={}
+		temp['method'] = q.split(".")[-1]
 #		print queries[q]
 #		sample_metadata.append(queries[q])
-		temp={}
-		r="%.1f" %random.uniform(20.0,25.0)
-		temp['temperature'] = "%.1f C" %float(r)
-		r="%.1f" %random.uniform(10.0,15.0)
-		temp['depth'] = "%.1f m" %float(r)
-		treatments = ['A','B']
-		temp['treatment'] = random.choice(treatments)
-		temp['method'] = 'blast'
+		if args.mock_meta_data:
+			r="%.1f" %random.uniform(20.0,25.0)
+			temp['temperature'] = "%.1f C" %float(r)
+			r="%.1f" %random.uniform(10.0,15.0)
+			temp['depth'] = "%.1f m" %float(r)
+			treatments = ['A','B']
+			temp['treatment'] = random.choice(treatments)
+
 		sample_metadata.append(temp)
 	
 #	print "sample_metadata:\n%s" %sample_metadata
@@ -1050,11 +1072,11 @@ if args.blast or args.phyloplace:
 	table = Table(data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Example Table')
 
 #	print table
-	out=open("final.biom","w")
-	table.to_json('metaBEAT', direct_io=out)
+	out=open(args.output_prefix+".biom","w")
+	table.to_json('metaBEAT v.'+VERSION, direct_io=out)
 	out.close()
 
-	out=open("final.tsv","w")
+	out=open(args.output_prefix+".tsv","w")
 	out.write(table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
 	out.close()
 
