@@ -10,10 +10,12 @@ RUN apt-get install -y openjdk-7-jre-headless
 
 #RUN mkdir /home/metabarcoding
 RUN pip install taxtastic==0.5.3
+RUN pip install biom-format==2.1.4
 
 RUN apt-get install ncbi-blast+
 ADD external_software/pplacer /usr/bin/
 ADD external_software/guppy /usr/bin/
+ADD external_software/rppr /usr/bin/
 ADD external_software/raxmlHPC-PTHREADS /usr/bin/
 ADD external_software/hmmalign /usr/bin/
 ADD external_software/hmmbuild /usr/bin/
@@ -26,11 +28,12 @@ ADD external_software/fastx_reverse_complement /usr/bin/
 ADD external_software/process_shortreads /usr/bin/
 
 RUN mkdir /src
-ADD scripts/metaBEAT.py /src/
 ENV PATH /src:$PATH
+RUN taxit new_database -d /src/taxonomy.db
+RUN rm /src/taxdmp.zip
+RUN mv /src/taxonomy.db /usr/bin/
 
-#RUN taxit new_database -d /src/taxonomy.db
-#RUN rm /src/taxdmp.zip
+ADD scripts/metaBEAT.py /usr/bin/
 
 #create mount point at /working
 RUN mkdir /home/working
