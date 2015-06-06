@@ -26,6 +26,7 @@ import shlex, subprocess
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 #############################################################################
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
+methods = []	#this list will contain the list of methods to be applied to the queries
 all_seqs = []
 skipped_ref_seqs = [] #defaultdict(list)
 references = {}
@@ -74,6 +75,9 @@ blast_group = parser.add_argument_group('BLAST search', 'The parameters in this 
 blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
+phyloplace_group = parser.add_argument_group('Phylogenetic placement', 'The parameters in this group affect phylogenetic placement')
+phyloplace_group.add_argument("--refpkg", help="PATH to refpkg", type=int, metavar="<DIR>", action="store")
+
 parser.add_argument("--version", action="version", version='%(prog)s v.0.6')
 args = parser.parse_args()
 
@@ -157,6 +161,18 @@ else:
 
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
+
+if args.phyloplace:
+	if not args.refpkg:
+		print "\nTo perform phylogenetic placement with pplacer metaBEAT currently expects a reference package to be specified via the --refpkg flag"
+		parser.print_help()
+		sys.exit()
+	
+	if not os.path.isdir(args.refpkg):
+		print "\nThe specified reference package does not seem to be valid"
+		sys.exit()
+	
+	
 
 if not os.path.isfile(args.REFlist):
 	print "no valid reference file supplied\n"
@@ -335,10 +351,6 @@ if args.taxids:
 
 #	handle = subprocess.call(taxtable, shell=True)
 	taxtable,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-#	if args.phyloplace:
-#		f = open("taxa.csv","w")
-#		f.write(taxtable + "\n")
-#		f.close()
 
 	tax_dict = {}
 	taxtable = open("taxa.csv","r")
@@ -390,7 +402,12 @@ if args.blast:
 
 print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
-if args.blast:
+if args.blast or args.phyloplace:
+	##determine which methods will be applied
+	if args.blast:
+		methods.append('blast')
+	if args.phyloplace:
+		methods.append('pplacer')
 
 	print "\n######## PROCESSING QUERIES ########\n"
 	if files_to_barcodes:
@@ -633,6 +650,13 @@ if args.blast:
 		blast_db = "../%s_blast_db" % args.marker
 		blast_out = "%s_%s_blastn.out.xml" % (args.marker, queryID)
 
+
+		for approach in methods:
+			if approach == 'pplacer':
+				print "\n### RUNNING PHYLOGENETIC PLACEMENT ###\n"
+				sys.exit()
+			elif approach == 'blast':
+				print "\n### RUNNING LOCAL BLAST ###\n"
 
 		print "\n### RUNNING LOCAL BLAST ###\n"
 		print "running blast search against local database %s" % blast_db
