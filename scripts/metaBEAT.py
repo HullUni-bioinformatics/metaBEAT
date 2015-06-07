@@ -492,7 +492,8 @@ if args.blast or args.phyloplace:
 		
 
 	for queryID in sorted(queries):
-		query_count += 1
+#		print queries
+#		query_count += 1
 #	for queryID, querydata in sorted(queries.items()): #loop through the query files and read in the current query id and the path to the files
 		print "\n##### processing query ID: %s #####\n" % (queryID)
 		species_count = defaultdict(list)
@@ -683,33 +684,39 @@ if args.blast or args.phyloplace:
 		some_hit = []	#This list will contain the ids of all queries that get a blast hit, i.e. even if it is non-signficant given the user specfied thresholds. For this set of reads we will attempt phylogenetic placement. No point of even trying if they dont get any blast hit.
 		for approach in methods:
 			if approach == 'pplacer':
+				query_count += 1
 				taxonomy_count = defaultdict(dict)
-#				print "\n### RUNNING PHYLOGENETIC PLACEMENT ###\n"
+				species_count = defaultdict(list) #this is actually not needed in the pplacer parsing, but I just need to empty it here in case it still contains stuff from the blast assignemtns, NEEDS TO BE CLEANED UP LATER
+				nohit_count = defaultdict(list) #again this is not needed here and I just empty it
+				print "\n##### PHYLOGENETIC PLACEMENT #####\n"
 				if not os.path.exists('PHYLOPLACE'):
 					os.makedirs('PHYLOPLACE')
 				os.chdir('PHYLOPLACE')
-				print "number of reads to be processed in phylogenetic placement: %i" %len(some_hit)
-				print "write queries to file\n"
+				print "number of queries to be processed: %i" %len(some_hit)
+				print "write queries to file: \'%s_pplacer_queries.fasta\'\n" %queryID
 #				print some_hit
 
 				fas_out = open(queryID+'_pplacer_queries.fasta','w')
 				for read in some_hit:
-					backup = unknown_seqs_dict[read].id
-					unknown_seqs_dict[read].id = unknown_seqs_dict[read].description
+##					backup = unknown_seqs_dict[read].id
+##					unknown_seqs_dict[read].id = unknown_seqs_dict[read].description
+					backup = unknown_seqs_dict[read].description
+					unknown_seqs_dict[read].description = unknown_seqs_dict[read].id
 #					print unknown_seqs_dict[read].id
 					fas_out.write(unknown_seqs_dict[read].format("fasta"))
-                                        unknown_seqs_dict[read].id = backup
+##					unknown_seqs_dict[read].id = backup
+					unknown_seqs_dict[read].description = backup
 
 				fas_out.close()
 	
-				print "identify reference hmm profile in reference package\n"
+				print "\n##### ALIGN QUERIES TO HMM PROFILE #####\n"
+				print "detecting reference hmm profile in reference package\n"
 				fh = open(args.refpkg+"/CONTENTS.json","r")
 				refpkg_content = json.load(fh)
 				profile = args.refpkg+'/'+refpkg_content['files']['profile']
-				print profile
+#				print profile
 				aln_fasta = args.refpkg+'/'+refpkg_content['files']['aln_fasta']
-				print aln_fasta				
-				print "align queries to hmm profile using hmmalign\n"
+#				print aln_fasta				
 				cmd = "hmmalign -o %s_queries_to_profile.sto --mapali %s %s %s_pplacer_queries.fasta" %(queryID, aln_fasta, profile, queryID)
 				print cmd
 				cmdlist = shlex.split(cmd)
@@ -719,9 +726,9 @@ if args.blast or args.phyloplace:
 					print stderr
 					sys.exit('some error from hmmalign')
 
-				print "run pplacer\n"
+				print "\n##### RUNNING PHYLOGENETIC PLACEMENT #####\n"
 				cmd = "pplacer -c %s %s_queries_to_profile.sto -p --keep-at-most 3 -o %s.jplace" %(args.refpkg, queryID, queryID)
-				print cmd
+				print cmd+'\n'
 				cmdlist = shlex.split(cmd)
 			        stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
 				print stdout	#this currently doesnt print anything, i.e. there is not stdout
@@ -729,38 +736,39 @@ if args.blast or args.phyloplace:
 					print stderr
 					sys.exit('some error from placer')
 				
-				print "interpreting pplacer results\n"
+				print "\n##### INTERPRETING PPLACER RESULTS #####\n"
 				fh = open(queryID+".jplace","r")
 				jplace = json.load(fh)
-				print "\n### find all placements###"
-				for queries in jplace['placements']:
-#					print queries['p'][0] #just consider the first placement
-					placement = queries['p'][0][0] #take the first placement for now
-					print "add taxid \'%s\' to global taxid dictionary" %placement
+#				print "\n### find all placements###"
+				for pp_queries in jplace['placements']:
+#					print pp_queries['p'][0] #just consider the first placement
+					placement = pp_queries['p'][0][0] #take the first placement for now
+#					print "add taxid \'%s\' to global taxid dictionary" %placement
 					global_taxids_hit[placement] += 1 #add taxid of placement to global dictionary
 					
 					if tax_dict[placement][1] == 'subspecies':
-						rank = species
+						rank = 'species'
 					else:
 						rank = tax_dict[placement][1]
 
 					if not taxonomy_count.has_key(rank):
 						taxonomy_count[rank] = defaultdict(list)
-						for q in queries['nm']:
+						for q in pp_queries['nm']:
 							taxonomy_count[rank][tax_dict[placement][2]].append(q[0])
 					else:
-						for q in queries['nm']:
+						for q in pp_queries['nm']:
 							taxonomy_count[rank][tax_dict[placement][2]].append(q[0])
 #						taxonomy_count[rank][tax_dict[placement][2]].append('dummy')
 #					print tax_dict[placement][1]	#this is the taxonomy rank
 #					print tax_dict[placement][2]	#this is the scientific name
 
-				print taxonomy_count
+#				print taxonomy_count
 
 #				sys.exit()
 
 
 			elif approach == 'blast':
+				query_count += 1
 				if not os.path.exists('BLAST'):
 					os.makedirs('BLAST')
 				os.chdir('BLAST')
@@ -952,61 +960,63 @@ if args.blast or args.phyloplace:
 										if args.verbose:
 											print "no LCA could be found for query: %s" % res.query
 
-				print "number of queries/clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
-				if len(processed)!=len(cluster_counts):	#final check
-					print "not all clusters were properly processed"
-					print "%i of %i" % (len(processed), len(cluster_counts))
+			print "number of queries/clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
+			if len(processed)!=len(cluster_counts):	#final check
+				print "not all clusters were properly processed"
+				print "%i of %i" % (len(processed), len(cluster_counts))
 
-#				print "species_count: %s" %species_count
+#			print "species_count: %s" %species_count
+#			print "taxonomy_count['species']: %s" %taxonomy_count['species']
+			for species in species_count.keys():
+#				print species
+				if not taxonomy_count['species'].has_key(species):
+					taxonomy_count['species'][species] = []
+				taxonomy_count['species'][species].extend(species_count[species])
 #				print "taxonomy_count['species']: %s" %taxonomy_count['species']
-				for species in species_count.keys():
-#					print species
-					if not taxonomy_count['species'].has_key(species):
-						taxonomy_count['species'][species] = []
-					taxonomy_count['species'][species].extend(species_count[species])
-#					print "taxonomy_count['species']: %s" %taxonomy_count['species']
-				taxonomy_count['nohit'] = nohit_count
-#				print "\nThe final dictionary"
-#				print taxonomy_count
-#				print
-#				tax_dict["tax_id"].append("species")
+			taxonomy_count['nohit'] = nohit_count
+#			print "\nThe final dictionary"
+#			print taxonomy_count
+#			print
+#			tax_dict["tax_id"].append("species")
+			if nohit_count:
 				tax_dict["tax_id"].insert(0,'nohit')
 
 
-				print "\n######## RESULT SUMMARY ########\n"
-				out=open(queryID+"-results.txt","w")
-				outstring="\nThe sample %s contained %i valid query sequences:\n" % (queryID, querycount[queryID])
-				print outstring
-				out.write(outstring+"\n")
+			print "\n######## RESULT SUMMARY ########\n"
+			out=open(queryID+"-results.txt","w")
+			outstring="\nThe sample %s contained %i valid query sequences:\n" % (queryID, querycount[queryID])
+			print outstring
+			out.write(outstring+"\n")
 
 
-#				print tax_dict['tax_id']
-				for tax_rank in reversed(tax_dict["tax_id"]):
-#					print tax_rank
-					if taxonomy_count.has_key(tax_rank):
-						total_per_rank_count=int(0)
-						output=[]
-						for hit in sorted(taxonomy_count[tax_rank].keys()):
+#			print tax_dict['tax_id']
+			for tax_rank in reversed(tax_dict["tax_id"]):
+#				print tax_rank
+				if taxonomy_count.has_key(tax_rank):
+					total_per_rank_count=int(0)
+					output=[]
+#					print taxonomy_count[tax_rank]
+					for hit in sorted(taxonomy_count[tax_rank].keys()):
+#						print hit
+#						print "\t%s: %i" % (hit, len(taxonomy_count[tax_rank][hit])) #This is the count of unique clusters that were assigned
+						current_count=int(0)
+						current_reads=[]
+						for read in taxonomy_count[tax_rank][hit]:
+#							print "centroid: %s" % read
+#							print "read count in cluster: %i" % cluster_counts[read]
+							current_count+=cluster_counts[read]	#sum up the number of actual reads in the clusters assigned to this taxon
+							if args.extract_centroid_reads:
+								current_reads.append(read)
 
-#							print "\t%s: %i" % (hit, len(taxonomy_count[tax_rank][hit])) #This is the count of unique clusters that were assigned
-							current_count=int(0)
-							current_reads=[]
-							for read in taxonomy_count[tax_rank][hit]:
-#								print "centroid: %s" % read
-#								print "read count in cluster: %i" % cluster_counts[read]
-								current_count+=cluster_counts[read]	#sum up the number of actual reads in the clusters assigned to this taxon
-								if args.extract_centroid_reads:
-									current_reads.append(read)
+							elif args.extract_all_reads:
+								current_reads.extend(cluster_reads[read])
 
-								elif args.extract_all_reads:
-									current_reads.extend(cluster_reads[read])
+							total_per_rank_count+=cluster_counts[read]
+						output.append("\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID]))
+#						print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
 
-								total_per_rank_count+=cluster_counts[read]
-							output.append("\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID]))
-#							print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
-
-
-							#### add data to global data
+						#### add data to global data
+						if tax_rank != 'nohit':	#dont include the nohits in the biom output
 							if not global_taxa[tax_rank].has_key(hit):
 								global_taxa[tax_rank][hit] = []
 								if query_count >= 1: #if this is already the 2+ query and the taxon has not been seen so far, I need to fill up the previous samples with count 0 for this taxon
@@ -1015,66 +1025,69 @@ if args.blast or args.phyloplace:
 								global_taxa[tax_rank][hit].append(int(current_count))
 							else:
 								global_taxa[tax_rank][hit].append((current_count))
-							
-							### print out reads
-							if current_reads: #This list is only non empty if either -e or -E was specified
-#								
-								if args.extract_centroid_reads:	#if the user has specified to extract centroid reads
-									#the following will sort the read ids by the number of reads in the respective cluster
-									temp_dict = defaultdict(list) #temporal dictionary 
-									for ID in current_reads:	#populate temporal dictionary with read counts as keys and centroid ids as values in a list (in case there are clusters that happen to have the same number of reads
-										temp_dict[cluster_counts[unknown_seqs_dict[ID].id]].append(ID)
-#										print "%s: %s" %(cluster_counts[unknown_seqs_dict[ID].id], ID)
-										
-									current_reads=[]	#empty the original list
-									for count in sorted(temp_dict.keys(), key=int, reverse=True):	#loop through the temporal dictionary reverse sorted by keys
-#										print temp_dict[count]
-										for read in temp_dict[count]:	#because the read ids are in a list I ll loop through here
-#											print "%s: %s" %(count, read)
-											current_reads.append(read)	#put the read ids back into the list sorted in descending order of the number reads in the respective clusters
-										
+						
+						### print out reads
+						if current_reads: #This list is only non empty if either -e or -E was specified
+#							
+							if args.extract_centroid_reads:	#if the user has specified to extract centroid reads
+								#the following will sort the read ids by the number of reads in the respective cluster
+								temp_dict = defaultdict(list) #temporal dictionary 
+								for ID in current_reads:	#populate temporal dictionary with read counts as keys and centroid ids as values in a list (in case there are clusters that happen to have the same number of reads
+									temp_dict[cluster_counts[unknown_seqs_dict[ID].id]].append(ID)
+#									print "%s: %s" %(cluster_counts[unknown_seqs_dict[ID].id], ID)
+									
+								current_reads=[]	#empty the original list
+								for count in sorted(temp_dict.keys(), key=int, reverse=True):	#loop through the temporal dictionary reverse sorted by keys
+#									print temp_dict[count]
+									for read in temp_dict[count]:	#because the read ids are in a list I ll loop through here
+#										print "%s: %s" %(count, read)
+										current_reads.append(read)	#put the read ids back into the list sorted in descending order of the number reads in the respective clusters
+									
 
-								fas_out = open(hit.replace(" ", "_")+'.fasta',"w")
-								for ID in current_reads:
-									backup = unknown_seqs_dict[ID].id
-									unknown_seqs_dict[ID].id = unknown_seqs_dict[ID].description
-##									unknown_seqs_dict[ID].description = "%s|%s" %(queryID, unknown_seqs_dict[ID].id)
-##									if args.extract_centroid_reads:
-##										unknown_seqs_dict[ID].id = "%s|%s|%i|%.2f" % (queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-##										unknown_seqs_dict[ID].description = unknown_seqs_dict[ID].id
-#									print unknown_seqs_dict[ID]
-									fas_out.write(unknown_seqs_dict[ID].format("fasta"))
-									unknown_seqs_dict[ID].id = backup
-#									fas_out.write(">%s|%i\n%s\n" % ( unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], unknown_seqs_dict[ID].seq ))
-								fas_out.close()
+							fas_out = open(hit.replace(" ", "_")+'.fasta',"w")
+							for ID in current_reads:
+								backup = unknown_seqs_dict[ID].id
+								unknown_seqs_dict[ID].id = unknown_seqs_dict[ID].description
+##								unknown_seqs_dict[ID].description = "%s|%s" %(queryID, unknown_seqs_dict[ID].id)
+##								if args.extract_centroid_reads:
+##									unknown_seqs_dict[ID].id = "%s|%s|%i|%.2f" % (queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+##									unknown_seqs_dict[ID].description = unknown_seqs_dict[ID].id
+#								print unknown_seqs_dict[ID]
+								fas_out.write(unknown_seqs_dict[ID].format("fasta"))
+								unknown_seqs_dict[ID].id = backup
+#								fas_out.write(">%s|%i\n%s\n" % ( unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], unknown_seqs_dict[ID].seq ))
+							fas_out.close()
 
-						outstring="%s: %i (%.2f %%)" % (tax_rank, total_per_rank_count, 100*float(total_per_rank_count)/querycount[queryID])
-						print outstring
-						out.write(outstring+"\n")
-						if tax_rank!='nohit':
-							for line in output:
-								print line
-								out.write(line+"\n")
+					outstring="%s: %i (%.2f %%)" % (tax_rank, total_per_rank_count, 100*float(total_per_rank_count)/querycount[queryID])
+					print outstring
+					out.write(outstring+"\n")
+					if tax_rank!='nohit':
+						for line in output:
+							print line
+							out.write(line+"\n")
 
-				out.close()
-				print "\n\n"	
-				os.chdir("../")	#leave directory of current analysis
+			out.close()
+			print "\n\n"	
+			os.chdir("../")	#leave directory of current analysis
+			if tax_dict["tax_id"][0] == 'nohit':
 				del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
-#				del tax_dict["tax_id"][-1] #remove the last element, i.e. 'species'
+#			del tax_dict["tax_id"][-1] #remove the last element, i.e. 'species'
 		
-				print '\n'+time.strftime("%c")+'\n'
+			print '\n'+time.strftime("%c")+'\n'
 
-				####this is the end
-#				print "\nTHIS IS THE END"
-#				print '%s: %s' %(queryID,queries[queryID])
-#				print global_taxa
+			####this is the end
+#			print "\nTHIS IS THE END"
+#			print '%s: %s' %(queryID,queries[queryID])
+#			print "query_count: %i" %query_count
+#			print 'global_taxa: %s' %global_taxa
 
-				for rank in global_taxa: #this is just to make sure that all taxa have the same number of counts
-					for taxon in global_taxa[rank]:
-						if len(global_taxa[rank][taxon]) < query_count:	#if the number of entries for the current taxon is smaller than the current index
-							global_taxa[rank][taxon].append(int(0))
+			for rank in global_taxa: #this is just to make sure that all taxa have the same number of counts
+				for taxon in global_taxa[rank]:
+					if len(global_taxa[rank][taxon]) < query_count:	#if the number of entries for the current taxon is smaller than the current index
+						global_taxa[rank][taxon].append(int(0))
 
-#				print "TAXIDS hit by query %s: %s" %(queryID, global_taxids_hit)
+#			print "TAXIDS hit by query %s: %s" %(queryID, global_taxids_hit)
+
 		os.chdir('../')	#leave directory for query
 
 if args.blast or args.phyloplace:
@@ -1095,8 +1108,8 @@ if args.blast or args.phyloplace:
 
 	#print data_to_biom
 	data = np.asarray(data_to_biom)
-	#print "data:\n%s" %data
-	#print len(data)
+#	print "data:\n%s" %data
+#	print len(data)
 
 	sample_ids = []	
 	for key in sorted(queries.keys()):
