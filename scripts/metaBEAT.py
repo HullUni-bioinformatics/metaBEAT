@@ -10,6 +10,7 @@ from Bio.Alphabet import generic_dna
 import numpy as np
 from biom.table import Table
 import random
+import json
 
 Entrez.email = "c.hahn@hull.ac.uk"
 import time
@@ -180,6 +181,7 @@ if args.phyloplace:
 	if not args.blast:
 		print "\nPhylogenetic placement currently requires a blast search first to determine the set of queries for which phylogenetic placement is attempted - add the --blast flag to your command\n"
 		sys.exit()	
+	args.refpkg = os.path.abspath(args.refpkg) 
 
 if not os.path.isfile(args.REFlist):
 	print "no valid reference file supplied\n"
@@ -404,7 +406,8 @@ if args.blast:
 	cmdlist = shlex.split(makeblastdb)
 	cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE)
 	stdout = cmd.communicate()[0]
-	print stdout
+	if args.verbose:
+		print stdout
 
 
 print '\n'+time.strftime("%c")+'\n'
@@ -596,7 +599,7 @@ if args.blast or args.phyloplace:
 		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
 #		unknown_seqs=list(SeqIO.parse(queryfile,'fasta'))	#read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
 		querycount[queryID] += len(unknown_seqs_dict)
-
+#		print "The queryfile contains %i query sequences.\n" %querycount[queryID]
 		
 		cluster_counts = {}
 		cluster_reads = defaultdict(list)
@@ -613,14 +616,14 @@ if args.blast or args.phyloplace:
 				print stdout
 	
 			#read in the results from the clustering, i.e. number of reads per cluster, later I could read in the actual read ids to allow for retrievel of reads assigned to a given taxon
-			all_clust_count = int(0)
+#			all_clust_count = int(0)
 			f=open(queryID+".uc","r") #read the file
 			for line in [l.strip() for l in f]: #loop through the file one line at a time, stripping off any newline characters
 				if line.startswith("C"): #process only lines that start with a "C"
-					all_clust_count+=1
+#					all_clust_count+=1
 					elem = line.split("\t")	#split the lines at tab
-					if int(elem[2]) >= args.clust_cov:
-						cluster_counts[elem[8]] = int(elem[2]) #write the counts to dictionary with key being the id of the centroid read
+#					if int(elem[2]) >= args.clust_cov:
+					cluster_counts[elem[8]] = int(elem[2]) #write the counts to dictionary with key being the id of the centroid read
 				if args.extract_all_reads:
 					if line.startswith("H"):
 						elem = line.split("\t")
@@ -630,25 +633,45 @@ if args.blast or args.phyloplace:
 							cluster_reads[elem[9]] = [elem[9]] #create a new key for the centroid id and add the centroid id as the first element into the list
 							cluster_reads[elem[9]].append(elem[8]) #add the new read id to the centroid cluster
 			f.close()
+			
+			for ID in unknown_seqs_dict.keys():
+				if cluster_counts.has_key(ID):
+					unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+#				print unknown_seqs_dict[ID].description
+
+			total_queries = querycount[queryID]
+			total_clusters = len(cluster_counts)
 			if args.clust_cov>1:
+				all_cluster_counts = cluster_counts
+				cluster_counts={}
 				os.rename(queryID+'_centroids.fasta', queryID+'_centroids_backup.fasta')
 				f=open(queryID+'_centroids.fasta',"w")
 				seqs=list(SeqIO.parse(queryID+'_centroids_backup.fasta','fasta'))
 				for record in seqs:
-					if cluster_counts.has_key(record.id):
+					if int(unknown_seqs_dict[record.id].description.split("|")[-2]) >= args.clust_cov:
 						outstring=">%s\n%s\n" % (record.id, record.seq)
+						cluster_counts[record.id] = all_cluster_counts[record.id]
 						f.write(outstring)
-	
-				querycount[queryID] -= all_clust_count - len(cluster_counts)
+				
+#				print "total: %i" %querycount[queryID]
+#				print "total cluster count: %i" %len(all_cluster_counts)
+#				print "good cluster count: %i" %len(cluster_counts)
+				good_read_count=0
+				for ID in cluster_counts.keys():	#count the number of reads in the retained clusters
+					good_read_count+=cluster_counts[ID]
+
+#				print "good read count: %i" %good_read_count
+				querycount[queryID] = good_read_count
 				f.close()
 			
-			print "vsearch identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i records per cluster) are used in subsequent analyses\n" % (all_clust_count, float(args.clust_match), len(cluster_counts), args.clust_cov)
-			queryfile = "%s_centroids.fasta" % queryID
+			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i sequences per cluster) are used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), args.clust_cov)
+			queryfile = "../%s_centroids.fasta" % queryID
 		else:
-			for sequence in unknown_seqs_dict.keys():
+			for ID in unknown_seqs_dict.keys():
 #				print sequence
-				cluster_counts[unknown_seqs_dict[sequence].description] = 1
-				cluster_reads[unknown_seqs_dict[sequence].description] = [unknown_seqs_dict[sequence].description]
+				cluster_counts[unknown_seqs_dict[ID].description] = 1
+				cluster_reads[unknown_seqs_dict[ID].description] = [unknown_seqs_dict[ID].description]
+				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
 
 #		print "BEFORE BLAST"
 #		print cluster_counts
@@ -660,13 +683,83 @@ if args.blast or args.phyloplace:
 		some_hit = []	#This list will contain the ids of all queries that get a blast hit, i.e. even if it is non-signficant given the user specfied thresholds. For this set of reads we will attempt phylogenetic placement. No point of even trying if they dont get any blast hit.
 		for approach in methods:
 			if approach == 'pplacer':
-				print "\n### RUNNING PHYLOGENETIC PLACEMENT ###\n"
+				taxonomy_count = defaultdict(dict)
+#				print "\n### RUNNING PHYLOGENETIC PLACEMENT ###\n"
 				if not os.path.exists('PHYLOPLACE'):
 					os.makedirs('PHYLOPLACE')
 				os.chdir('PHYLOPLACE')
 				print "number of reads to be processed in phylogenetic placement: %i" %len(some_hit)
-				print some_hit
-				sys.exit()
+				print "write queries to file\n"
+#				print some_hit
+
+				fas_out = open(queryID+'_pplacer_queries.fasta','w')
+				for read in some_hit:
+					backup = unknown_seqs_dict[read].id
+					unknown_seqs_dict[read].id = unknown_seqs_dict[read].description
+#					print unknown_seqs_dict[read].id
+					fas_out.write(unknown_seqs_dict[read].format("fasta"))
+                                        unknown_seqs_dict[read].id = backup
+
+				fas_out.close()
+	
+				print "identify reference hmm profile in reference package\n"
+				fh = open(args.refpkg+"/CONTENTS.json","r")
+				refpkg_content = json.load(fh)
+				profile = args.refpkg+'/'+refpkg_content['files']['profile']
+				print profile
+				aln_fasta = args.refpkg+'/'+refpkg_content['files']['aln_fasta']
+				print aln_fasta				
+				print "align queries to hmm profile using hmmalign\n"
+				cmd = "hmmalign -o %s_queries_to_profile.sto --mapali %s %s %s_pplacer_queries.fasta" %(queryID, aln_fasta, profile, queryID)
+				print cmd
+				cmdlist = shlex.split(cmd)
+			        stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+				print stdout	#this currently doesnt print anything, i.e. there is not stdout
+				if stderr:
+					print stderr
+					sys.exit('some error from hmmalign')
+
+				print "run pplacer\n"
+				cmd = "pplacer -c %s %s_queries_to_profile.sto -p --keep-at-most 3 -o %s.jplace" %(args.refpkg, queryID, queryID)
+				print cmd
+				cmdlist = shlex.split(cmd)
+			        stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+				print stdout	#this currently doesnt print anything, i.e. there is not stdout
+				if stderr:
+					print stderr
+					sys.exit('some error from placer')
+				
+				print "interpreting pplacer results\n"
+				fh = open(queryID+".jplace","r")
+				jplace = json.load(fh)
+				print "\n### find all placements###"
+				for queries in jplace['placements']:
+#					print queries['p'][0] #just consider the first placement
+					placement = queries['p'][0][0] #take the first placement for now
+					print "add taxid \'%s\' to global taxid dictionary" %placement
+					global_taxids_hit[placement] += 1 #add taxid of placement to global dictionary
+					
+					if tax_dict[placement][1] == 'subspecies':
+						rank = species
+					else:
+						rank = tax_dict[placement][1]
+
+					if not taxonomy_count.has_key(rank):
+						taxonomy_count[rank] = defaultdict(list)
+						for q in queries['nm']:
+							taxonomy_count[rank][tax_dict[placement][2]].append(q[0])
+					else:
+						for q in queries['nm']:
+							taxonomy_count[rank][tax_dict[placement][2]].append(q[0])
+#						taxonomy_count[rank][tax_dict[placement][2]].append('dummy')
+#					print tax_dict[placement][1]	#this is the taxonomy rank
+#					print tax_dict[placement][2]	#this is the scientific name
+
+				print taxonomy_count
+
+#				sys.exit()
+
+
 			elif approach == 'blast':
 				if not os.path.exists('BLAST'):
 					os.makedirs('BLAST')
@@ -790,7 +883,7 @@ if args.blast or args.phyloplace:
 
 									taxok=int(0)
 									for tax in tax_list: #for every taxid in the list
-#										print "taxon: %s; taxid at level %i: %s" % ( tax, counter, tax_dict[tax][index])
+#										print "taxon: %s; taxid at level %i(%i): %s" % ( tax, counter, index, tax_dict[tax][index])
 										if tax_dict[tax][index]: 
 										#we access the tax_dict dictionary using the taxid as the key, the value is a list, which contains taxids 
 										#for the parents of the current taxid. The last element in the list is a taxid at species level, the next to last
@@ -864,7 +957,14 @@ if args.blast or args.phyloplace:
 					print "not all clusters were properly processed"
 					print "%i of %i" % (len(processed), len(cluster_counts))
 
-				taxonomy_count['species'] = species_count
+#				print "species_count: %s" %species_count
+#				print "taxonomy_count['species']: %s" %taxonomy_count['species']
+				for species in species_count.keys():
+#					print species
+					if not taxonomy_count['species'].has_key(species):
+						taxonomy_count['species'][species] = []
+					taxonomy_count['species'][species].extend(species_count[species])
+#					print "taxonomy_count['species']: %s" %taxonomy_count['species']
 				taxonomy_count['nohit'] = nohit_count
 #				print "\nThe final dictionary"
 #				print taxonomy_count
@@ -936,12 +1036,15 @@ if args.blast or args.phyloplace:
 
 								fas_out = open(hit.replace(" ", "_")+'.fasta',"w")
 								for ID in current_reads:
-									unknown_seqs_dict[ID].description = "%s|%s" %(queryID, unknown_seqs_dict[ID].id)
-									if args.extract_centroid_reads:
-										unknown_seqs_dict[ID].id = "%s|%s|%i|%.2f" % (queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-										unknown_seqs_dict[ID].description = unknown_seqs_dict[ID].id
+									backup = unknown_seqs_dict[ID].id
+									unknown_seqs_dict[ID].id = unknown_seqs_dict[ID].description
+##									unknown_seqs_dict[ID].description = "%s|%s" %(queryID, unknown_seqs_dict[ID].id)
+##									if args.extract_centroid_reads:
+##										unknown_seqs_dict[ID].id = "%s|%s|%i|%.2f" % (queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+##										unknown_seqs_dict[ID].description = unknown_seqs_dict[ID].id
 #									print unknown_seqs_dict[ID]
 									fas_out.write(unknown_seqs_dict[ID].format("fasta"))
+									unknown_seqs_dict[ID].id = backup
 #									fas_out.write(">%s|%i\n%s\n" % ( unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], unknown_seqs_dict[ID].seq ))
 								fas_out.close()
 
