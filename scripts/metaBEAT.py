@@ -42,6 +42,7 @@ files_to_barcodes = defaultdict(dict)
 global_taxa = defaultdict(dict)
 query_count = 0
 global_taxids_hit = defaultdict(int)
+metadata = defaultdict(dict)
 
 parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool', prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
@@ -83,6 +84,7 @@ phyloplace_group.add_argument("--refpkg", help="PATH to refpkg", metavar="<DIR>"
 
 biom_group = parser.add_argument_group('BIOM OUTPUT','The arguments in this groups affect the output in BIOM format')
 biom_group.add_argument("-o","--output_prefix", help="prefix for BIOM output files (default='metaBEAT')", action="store", default="metaBEAT")
+biom_group.add_argument("--metadata", help="comma delimited file containing metadata (optional)", action="store")
 biom_group.add_argument("--mock_meta_data", help="add mock metadata to the samples in the BIOM output", action="store_true")
 
 parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
@@ -183,6 +185,7 @@ if args.phyloplace:
 		sys.exit()	
 	args.refpkg = os.path.abspath(args.refpkg) 
 
+
 if not os.path.isfile(args.REFlist):
 	print "no valid reference file supplied\n"
 	parser.print_help()
@@ -254,6 +257,24 @@ if args.querylist:
 			print "adapter file is not a valid file"
 			parser.print_help()
 			sys.exit(0)
+
+	if args.metadata:
+		fh = open(args.metadata, "r")
+		header_line = fh.readline().strip()
+		headers = header_line.split(",")
+		for line in fh:
+			line = line.strip()
+			cols = line.split(",")
+			for i in range(1,len(cols)):
+#				print cols[i]
+				metadata[cols[0]][headers[i]] = cols[i]
+#		print metadata
+		for sID in queries.keys():
+			if not metadata.has_key(sID):
+				print "The sample %s has no metadata available\n" %sID
+#			else:
+#				print metadata[sID]
+		fh.close()
 
 #print len(queries)
 #print len(files_to_barcodes[files_to_barcodes.keys()[0]])
@@ -1134,8 +1155,16 @@ if args.blast or args.phyloplace:
 			treatments = ['A','B']
 			temp['treatment'] = random.choice(treatments)
 
+		if args.metadata:
+			current = ".".join(q.split(".")[:-1])
+#			print current
+			if not metadata.has_key(current):
+				print "sample %s has no metadata available\n"
+			else:
+				for meta in metadata[current].keys():
+					temp[meta] = metadata[current][meta]
 		sample_metadata.append(temp)
-	
+		
 #	print "sample_metadata:\n%s" %sample_metadata
 #	print len(sample_metadata)
 	
