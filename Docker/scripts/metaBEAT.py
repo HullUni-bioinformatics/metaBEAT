@@ -42,6 +42,7 @@ files_to_barcodes = defaultdict(dict)
 global_taxa = defaultdict(dict)
 query_count = 0
 global_taxids_hit = defaultdict(int)
+metadata = defaultdict(dict)
 
 parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool', prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
@@ -83,6 +84,7 @@ phyloplace_group.add_argument("--refpkg", help="PATH to refpkg", metavar="<DIR>"
 
 biom_group = parser.add_argument_group('BIOM OUTPUT','The arguments in this groups affect the output in BIOM format')
 biom_group.add_argument("-o","--output_prefix", help="prefix for BIOM output files (default='metaBEAT')", action="store", default="metaBEAT")
+biom_group.add_argument("--metadata", help="comma delimited file containing metadata (optional)", action="store")
 biom_group.add_argument("--mock_meta_data", help="add mock metadata to the samples in the BIOM output", action="store_true")
 
 parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
@@ -183,6 +185,7 @@ if args.phyloplace:
 		sys.exit()	
 	args.refpkg = os.path.abspath(args.refpkg) 
 
+
 if not os.path.isfile(args.REFlist):
 	print "no valid reference file supplied\n"
 	parser.print_help()
@@ -254,6 +257,24 @@ if args.querylist:
 			print "adapter file is not a valid file"
 			parser.print_help()
 			sys.exit(0)
+
+	if args.metadata:
+		fh = open(args.metadata, "r")
+		header_line = fh.readline().strip()
+		headers = header_line.split(",")
+		for line in fh:
+			line = line.strip()
+			cols = line.split(",")
+			for i in range(1,len(cols)):
+#				print cols[i]
+				metadata[cols[0]][headers[i]] = cols[i]
+#		print metadata
+		for sID in queries.keys():
+			if not metadata.has_key(sID):
+				print "The sample %s has no metadata available\n" %sID
+#			else:
+#				print metadata[sID]
+		fh.close()
 
 #print len(queries)
 #print len(files_to_barcodes[files_to_barcodes.keys()[0]])
@@ -540,22 +561,22 @@ if args.blast or args.phyloplace:
 					trimmed_files[2]= queryID+'.notCombined_2.fastq.gz'
 					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
 				
-				print "\n### JUST SOME FILE WRANGLING ###\n"
+#				print "\n### JUST SOME FILE WRANGLING ###\n"
 
 				files = " ".join(trimmed_files[-2:])
 				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTAC -Q %i| fastq_to_fasta -Q %i > temp2.fasta" % (files, args.phred, args.phred, args.phred)
-				print cmd
+#				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
 				files = " ".join(trimmed_files[:-2])
 				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTACC -Q %i| fastx_reverse_complement -Q %i| fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred, args.phred, args.phred, args.phred)
-				print cmd
+#				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 
 				cmd="cat temp1.fasta temp2.fasta > temp_trimmed.fasta"
-				print cmd
+#				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
@@ -563,7 +584,7 @@ if args.blast or args.phyloplace:
 				os.remove("temp2.fasta")
 			else:
 				cmd="zcat %s | fastq_to_fasta > temp_trimmed.fasta" % trimmed_files[0]
-				print cmd
+#				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 
@@ -1134,8 +1155,16 @@ if args.blast or args.phyloplace:
 			treatments = ['A','B']
 			temp['treatment'] = random.choice(treatments)
 
+		if args.metadata:
+			current = ".".join(q.split(".")[:-1])
+#			print current
+			if not metadata.has_key(current):
+				print "sample %s has no metadata available\n"
+			else:
+				for meta in metadata[current].keys():
+					temp[meta] = metadata[current][meta]
 		sample_metadata.append(temp)
-	
+		
 #	print "sample_metadata:\n%s" %sample_metadata
 #	print len(sample_metadata)
 	

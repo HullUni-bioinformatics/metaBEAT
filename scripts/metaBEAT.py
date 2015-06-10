@@ -561,22 +561,22 @@ if args.blast or args.phyloplace:
 					trimmed_files[2]= queryID+'.notCombined_2.fastq.gz'
 					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
 				
-				print "\n### JUST SOME FILE WRANGLING ###\n"
+#				print "\n### JUST SOME FILE WRANGLING ###\n"
 
 				files = " ".join(trimmed_files[-2:])
 				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTAC -Q %i| fastq_to_fasta -Q %i > temp2.fasta" % (files, args.phred, args.phred, args.phred)
-				print cmd
+#				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
 				files = " ".join(trimmed_files[:-2])
 				cmd="zcat %s | fastx_reverse_complement -Q %i| fastx_clipper -a GGAGGATATACAGTTCAACCAGTACC -Q %i| fastx_reverse_complement -Q %i| fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred, args.phred, args.phred, args.phred)
-				print cmd
+#				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 
 				cmd="cat temp1.fasta temp2.fasta > temp_trimmed.fasta"
-				print cmd
+#				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
@@ -584,7 +584,7 @@ if args.blast or args.phyloplace:
 				os.remove("temp2.fasta")
 			else:
 				cmd="zcat %s | fastq_to_fasta > temp_trimmed.fasta" % trimmed_files[0]
-				print cmd
+#				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 

@@ -36,6 +36,9 @@ RUN mv /src/taxonomy.db /usr/bin/
 ADD scripts/metaBEAT.py /usr/bin/
 ADD scripts/jplace_to_biom.py /usr/bin/
 
+ADD external_software/fastq_quality_trimmer /usr/bin/
+ADD external_software/fastq_quality_filter /usr/bin/
+
 #create mount point at /working
 RUN mkdir /home/working
 RUN mkdir /home/working/IN
