@@ -4,6 +4,8 @@ __Example commands could be:__
 /home/chrishah/Dropbox/Github/Docker/metab-box/scripts/metabbox-test/fix_gb.py -R REFfile -Q QUERYfile_full --taxids --blast --fasta --phyloplace --merge --product_length 400 --clust_cov 3 --min_ident 0.95 -E --trim_minlength 100 --n_threads 5 --gb_out ../references/CytB_cleaned_05_2015_checked.gb --rec_check
 
 /home/chrishah/Dropbox/Github/Docker/metab-box/scripts/metabbox-test/fix_gb.py -Q QUERYfile_all -R REFfile --seqinfo --fasta --taxids --blast -m 12S -n 4 --min_ident 1 --clust_cov 3 --trim_adapter adapters_rc.fasta --trim_minlength 90 -E --merge --product_length 110 --rec_check
+
+/home/chrishah/Dropbox/Github/metaBEAT/scripts/metaBEAT.py -R REF_file_local -Q QUERYfile_local --merge --product_length 400 --clust_match 0.95 --clust_cov 5 --trim_minlength 100 -n 5 -v --cluster --PCR_primer PCR-primers.fasta
 ```
 
 

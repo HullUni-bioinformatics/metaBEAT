@@ -4,6 +4,9 @@ from Bio import SeqIO
 from Bio import Entrez
 from Bio.SeqFeature import SeqFeature
 from Bio.SeqFeature import FeatureLocation
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+#from Bio.Alphabet import IUPAC
 from Bio.Blast.Applications import NcbiblastxCommandline
 from Bio.Blast import NCBIXML
 from Bio.Alphabet import generic_dna
@@ -11,6 +14,8 @@ import numpy as np
 from biom.table import Table
 import random
 import json
+import gzip
+from itertools import product
 
 Entrez.email = "c.hahn@hull.ac.uk"
 import time
@@ -43,6 +48,14 @@ global_taxa = defaultdict(dict)
 query_count = 0
 global_taxids_hit = defaultdict(int)
 metadata = defaultdict(dict)
+read_stats = defaultdict(dict)
+read_metrics = ['total', 'trimmed-total', 'trimmed-pe', 'trimmed-orphans', 'merged', 'cluster_thres', 'clusters_total', 'clusters_min_cov', 'cluster_above_thres']
+read_counts_out = open("reads_stats.csv","w")
+outstring = "sample,"+",".join(read_metrics)
+read_counts_out.write(outstring+"\n")
+read_counts_out.close()
+#primer_clip_string = ""
+primer_versions = []
 
 parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool', prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
@@ -60,6 +73,7 @@ parser.add_argument("-n", "--n_threads", help="Number of threads (default: 1)", 
 parser.add_argument("-E", "--extract_centroid_reads", help="extract centroid reads to files", action="store_true")
 parser.add_argument("-e", "--extract_all_reads", help="extract reads to files", action="store_true")
 query_group = parser.add_argument_group('Query preprocessing', 'The parameters in this group affect how the query sequences are processed')
+query_group.add_argument("--PCR_primer", help='PCR primers (provided in fasta file) to be clipped from reads', metavar="<FILE>", action="store")
 query_group.add_argument("--trim_adapter", help="trim adapters provided in file", metavar="<FILE>", action="store")
 query_group.add_argument("--trim_qual", help="minimum phred quality score (default: 30)", metavar="<INT>", type=int, action="store", default=30)
 query_group.add_argument("--trim_window", help="sliding window size (default: 5) for trimming; if average quality drops below the specified minimum quality all subsequent bases are removed from the reads", metavar="<INT>", type=int, action="store", default=5)
@@ -251,6 +265,63 @@ if args.querylist:
 					files_to_barcodes["|".join(per_sample_query_files)]["-".join(per_sample_barcodes)] = querydata[0]
 #			print queries[querydata[0]]
 #			print files_to_barcodes
+	if args.PCR_primer:
+		if not os.path.isfile(args.PCR_primer):
+			print "PCR primer file is not valid"
+			parser.print_help()
+			sys.exit(0)
+		args.PCR_primer = os.path.abspath(args.PCR_primer)
+		#check for IUPAC and expand if necessary
+		IUPAC = {'R': ['A','C'], 'W': ['A','T'], 'M': ['A','C'], 'S': ['C','G'], 'Y': ['C','T'], 'K': ['G','T']}
+		t_seqs = list(SeqIO.parse(open(args.PCR_primer,'r'),'fasta'))
+		for r in t_seqs:
+			pos = []
+			base = []
+			states = []
+#			print r
+			for i in range(len(r.seq)):
+				if not r.seq[i] in 'AGCTagct':
+#					print r.seq[i]
+					pos.append(i)
+					if r.seq[i] == 'I':
+						base.append('K')
+					else:
+						base.append(r.seq[i])
+
+			if len(pos) > 0:
+				states = list(product('01',repeat=len(pos)))
+			
+#				print len(states)
+				state_count=0
+				for s in states:
+#					print s
+#					print r.seq 
+					new_seq = list(str(r.seq))
+					for i in range(len(pos)):
+#						print "This is ambiguous site %i: %i" %(i, pos[i])
+#						print "This is the original base: %s" %base[i]
+#						print "These are the options for this base: %s" %IUPAC[base[i]]
+#						print "Will be set to %s (state: %s)" %(IUPAC[base[i]][int(s[i])], s[i])
+						new_seq[pos[i]] = IUPAC[base[i]][int(s[i])]
+					rec = SeqRecord(Seq("".join(new_seq)), id=r.id+'_v'+str(state_count), description=r.id+'_v'+str(state_count))
+#					print rec
+					primer_versions.append(rec)
+#					primer_versions[r.id+'_v'+str(state_count)] = "".join(new_seq)
+#					print ">%s_v%i" %(r.id, state_count)
+#					print "".join(new_seq)
+					state_count += 1
+
+			else:
+				primer_versions.append(r)
+
+		##add reverse complements for all primers
+		rc_versions = []
+		for rec in primer_versions:
+#			print rec
+			new_rec = SeqRecord(rec.seq.reverse_complement(), id=rec.id+'_rc', description=rec.id+'_rc')
+			rc_versions.append(new_rec)
+		primer_versions.extend(rc_versions)
+		
 	if args.trim_adapter:
 		args.trim_adapter = os.path.abspath(args.trim_adapter)
 		if not os.path.isfile(args.trim_adapter):
@@ -387,7 +458,7 @@ if args.taxids:
 	for line in taxtable:
 #	for line in taxtable.split("\n"):
 #		print line
-		line = re.sub('"','',line)
+		line = re.sub('"','',line.strip())
 #		print line
 		array = line.split(',')
 		if len(array) > 1:
@@ -396,7 +467,8 @@ if args.taxids:
 			key = array.pop(0)
 #			print key
 #			print array
-			array.pop(-1)
+			if array[-1] == 'subspecies':
+				array.pop(-1)
 #			print array
 #			print "key: %s - %s" % (key, array[-1])
 #			print len(array)
@@ -429,11 +501,12 @@ if args.blast:
 	stdout = cmd.communicate()[0]
 	if args.verbose:
 		print stdout
-
+	
+	blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
 
 print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
-if args.blast or args.phyloplace:
+if args.blast or args.phyloplace or args.merge or args.cluster:
 	##determine which methods will be applied
 	if args.blast:
 		methods.append('blast')
@@ -500,7 +573,8 @@ if args.blast or args.phyloplace:
 						new = "%s_%i.fastq" %(files_to_barcodes[lib][sample],a)
 #						print new
 						os.rename(old,new)
-						new_file_list.append('../demultiplexed/'+new)
+						os.remove("sample_%s.rem.%i.fq" %(sample,a))
+						new_file_list.append(os.path.abspath('.')+"/"+new)
 						
 					queries[files_to_barcodes[lib][sample]]['files'] = new_file_list
 			elif len(data)==1:
@@ -524,14 +598,26 @@ if args.blast or args.phyloplace:
 			os.makedirs(queryID)
 		
 #		print queries[queryID]['files']
+		
+		#determine total read number per sample
+		read_stats[queryID]['total'] = int(0)
+		for f in queries[queryID]['files']:
+			if f.endswith('gz'):
+				t_seqs = list(SeqIO.parse(gzip.open(f, 'rb'),queries[queryID]['format']))
+			else:
+				t_seqs = list(SeqIO.parse(open(f, 'r'),queries[queryID]['format']))
+			read_stats[queryID]['total'] += len(t_seqs)
+		
+#		print "Total number of reads for sample %s: %i" %(queryID, read_stats[queryID][0])
 
 		os.chdir(queryID)
+
 		if (queries[queryID]['format']=="fastq"):
 			print "\n### READ QUALITY TRIMMING ###\n"
 			if len(queries[queryID]['files'])==2:
 				trimmomatic_path="java -jar /usr/bin/trimmomatic-0.32.jar"
 				print "\ntrimming PE reads with trimmomatic"
-				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queries[queryID]['files'][1], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
+				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i -trimlog trimmomatic.log %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queries[queryID]['files'][1], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
 				trimmed_files=[queryID+'_forward.paired.fastq.gz', queryID+'_forward.singletons.fastq.gz', queryID+'_reverse.paired.fastq.gz', queryID+'_reverse.singletons.fastq.gz']
 			elif len(queries[queryID]['files'])==1:
 				print "\ntrimming SE reads with trimmomatic"
@@ -539,14 +625,93 @@ if args.blast or args.phyloplace:
 				trimmed_files=[queryID+'_trimmed.fastq.gz']
 
 			trimmomatic="%s" % trimmomatic_exec
-			print trimmomatic
 			cmdlist = shlex.split(trimmomatic)
 			cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
 			stdout,stderr = cmd.communicate() #[0]
+			print trimmomatic
 			print stdout
 			print stderr
+			
+			if args.PCR_primer:
+				temp_primer_out = open("temp_primers.fasta","w")
+				SeqIO.write(primer_versions, temp_primer_out, "fasta")
+				temp_primer_out.close()
+
+				for f in trimmed_files:
+					cmd = "zcat %s | fastx_reverse_complement -Q %i | gzip > %s" %(f, args.phred, f+'.rc.gz')
+					print cmd
+					cmdlist = shlex.split(cmd)
+					cmd = subprocess.call(cmd, shell=True)
+
+				print "\nCLIP PRIMER SEQUENCES\n"
+				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s temp_forward.paired.fastq.gz temp_forward.singletons.fastq.gz temp_reverse.paired.fastq.gz temp_reverse.singletons.fastq.gz ILLUMINACLIP:temp_primers.fasta:2:5:10 MINLEN:%i" % (args.n_threads, args.phred, trimmed_files[0]+'.rc.gz', trimmed_files[2]+'.rc.gz', args.trim_minlength)
+
+				trimmomatic="%s" % trimmomatic_exec
+				print trimmomatic
+				cmdlist = shlex.split(trimmomatic)
+				cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
+				stdout,stderr = cmd.communicate() #[0]
+				print stdout
+				print stderr
+
+				cmd = 'zcat *singletons.fastq.gz.rc.gz | gzip > singletons_rc.fastq.gz'
+				print cmd
+				cmdlist = shlex.split(cmd)
+				cmd = subprocess.call(cmd, shell=True)
+				
+				trimmomatic_exec=trimmomatic_path+" SE -threads %i -phred%i singletons_rc.fastq.gz singletons_rc_clipped.fastq.gz ILLUMINACLIP:temp_primers.fasta:2:5:10 MINLEN:%i" % (args.n_threads, args.phred, args.trim_minlength)
+
+				trimmomatic="%s" % trimmomatic_exec
+				print trimmomatic
+				cmdlist = shlex.split(trimmomatic)
+				cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
+				stdout,stderr = cmd.communicate() #[0]
+				print stdout
+				print stderr
+
+
+				cmd = "zcat temp_forward.paired.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[0])
+				print cmd
+				cmdlist = shlex.split(cmd)
+				cmd = subprocess.call(cmd, shell=True)
+
+				cmd = "zcat temp_reverse.paired.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[2])
+				print cmd
+				cmdlist = shlex.split(cmd)
+				cmd = subprocess.call(cmd, shell=True)
+
+				cmd = "zcat singletons_rc_clipped.fastq.gz temp_forward.singletons.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[1])
+				print cmd
+				cmdlist = shlex.split(cmd)
+				cmd = subprocess.call(cmd, shell=True)
+
+				cmd = "zcat temp_reverse.singletons.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[3])
+				print cmd
+				cmdlist = shlex.split(cmd)
+				cmd = subprocess.call(cmd, shell=True)
+
+#				for f in queries[queryID]['files']:
+#					cmd = "cat %s | fastx_reverse_complement -Q %i |fastx_clipper -Q %i -n %s | fastx_reverse_complement -Q %i > %s" %(f, args.phred, args.phred, primer_clip_string,  args.phred, f+'.no_primer') 
+#					print cmd
+#					cmdlist = shlex.split(cmd)
+#					cmd = subprocess.call(cmd, shell=True)
 
 			if len(trimmed_files)==4:
+				#determining read counts
+				read_stats[queryID]['trimmed-total'] = int(0)
+				read_stats[queryID]['trimmed-pe'] = int(0)
+				read_stats[queryID]['trimmed-orphans'] = int(0)
+				for s in trimmed_files:
+					t_seqs = list(SeqIO.parse(gzip.open(s,'rb'),'fastq'))
+					read_stats[queryID]['trimmed-total'] += len(t_seqs)
+					if 'paired' in s:
+						read_stats[queryID]['trimmed-pe'] += len(t_seqs)
+						
+					elif 'singleton' in s:				
+						read_stats[queryID]['trimmed-orphans'] += len(t_seqs)
+
+
+
 				if args.merge:
 					print "\n### MERGING READ PAIRS ###\n"
 					print "merging paired-end reads with flash\n"
@@ -560,7 +725,23 @@ if args.blast or args.phyloplace:
 					trimmed_files[0]= queryID+'.notCombined_1.fastq.gz'
 					trimmed_files[2]= queryID+'.notCombined_2.fastq.gz'
 					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
+
+					#change names of extended reads
+					ext_seqs=[]
+					t_seqs = list(SeqIO.parse(gzip.open(queryID+'.extendedFrags.fastq.gz', 'rb'),'fastq'))
+					read_stats[queryID]['merged'] = 2*len(t_seqs)
+					for record in t_seqs:
+						record.id = record.id+"_ex"
+						record.description = record.id
+						ext_seqs.append(record)
+					
+					ex_out = gzip.open("ex_temp.fastq.gz","wb")
+					SeqIO.write(ext_seqs, ex_out, "fastq")
+					ex_out.close()
+					os.rename("ex_temp.fastq.gz", queryID+'.extendedFrags.fastq.gz')						
 				
+				print read_stats
+
 #				print "\n### JUST SOME FILE WRANGLING ###\n"
 
 				files = " ".join(trimmed_files[-2:])
@@ -587,6 +768,11 @@ if args.blast or args.phyloplace:
 #				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
+				
+				#determine the number of reads surviving trimming
+				t_seqs = list(SeqIO.parse('temp_trimmed.fasta','fasta'))
+				read_stats['description'].append('trimmed-total')
+				read_stats[queryID].append(len(t_seqs))
 
 			fin=open("temp_trimmed.fasta","r")
 			f_out=open(queryID+'_trimmed.fasta',"w")
@@ -595,7 +781,20 @@ if args.blast or args.phyloplace:
 				
 			fin.close()
 			f_out.close()
-			os.remove("temp_trimmed.fasta")
+
+			#cleanup
+			cont = os.listdir(".")
+			to_remove = []
+			for f in cont:
+				if f.startswith('temp'):
+					to_remove.append(f)
+				
+				if f.endswith('.gz.rc.gz') or f.endswith('_rc_clipped.fastq.gz') or f.endswith('_rc.fastq.gz'):
+					to_remove.append(f)
+				
+			for f in to_remove:
+				os.remove(f) #trimmed.fasta")
+			
 
 #			cmd="zcat %s | fastx_clipper -a CTAGAGGAGCCTGTTCTA | fastq_to_fasta > temp1.fasta" % (querydata[1])
 #			print cmd
@@ -613,10 +812,11 @@ if args.blast or args.phyloplace:
 #                       cmd = subprocess.call(cmd, shell=True)
 
 
-			queryfile=queryID+'_trimmed.fasta'
+			queryfile=os.path.abspath('.')+"/"+queryID+'_trimmed.fasta'
 
 		else:
 			queryfile = queries[queryID]['files'][0]
+			print "\nWARNING - EXPECTING input data to come in SINGLE FASTA FILE\n"
 
 		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
 #		unknown_seqs=list(SeqIO.parse(queryfile,'fasta'))	#read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
@@ -687,7 +887,13 @@ if args.blast or args.phyloplace:
 				f.close()
 			
 			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i sequences per cluster) are used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), args.clust_cov)
-			queryfile = "../%s_centroids.fasta" % queryID
+		
+			read_stats[queryID]['clusters_total'] = total_clusters
+			read_stats[queryID]['cluster_thres'] = args.clust_match
+			read_stats[queryID]['clusters_min_cov'] = args.clust_cov
+			read_stats[queryID]['cluster_above_thres'] = len(cluster_counts)
+
+			queryfile = os.path.abspath('.')+"/"+"%s_centroids.fasta" %queryID #"../%s_centroids.fasta" % queryID
 		else:
 			for ID in unknown_seqs_dict.keys():
 #				print sequence
@@ -695,11 +901,23 @@ if args.blast or args.phyloplace:
 				cluster_reads[unknown_seqs_dict[ID].description] = [unknown_seqs_dict[ID].description]
 				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
 
+
+		print "WRITING BASIC READ STATS TO FILE\n"
+		outstring = queryID
+		for m in read_metrics:
+			if read_stats[queryID].has_key(m):
+				outstring += ','+str(read_stats[queryID][m])
+			else:
+				outstring += ',NA'
+		read_counts_out = open("../reads_stats.csv","a")
+		read_counts_out.write(outstring+"\n")
+		read_counts_out.close()
+	
+		
 #		print "BEFORE BLAST"
 #		print cluster_counts
 #		print cluster_reads
 		#running blast search against previously build database
-		blast_db = "../../%s_blast_db" % args.marker
 		blast_out = "%s_%s_blastn.out.xml" % (args.marker, queryID)
 
 		some_hit = []	#This list will contain the ids of all queries that get a blast hit, i.e. even if it is non-signficant given the user specfied thresholds. For this set of reads we will attempt phylogenetic placement. No point of even trying if they dont get any blast hit.
@@ -796,13 +1014,15 @@ if args.blast or args.phyloplace:
 				print "\n### RUNNING LOCAL BLAST ###\n"
 
 				print "running blast search against local database %s" % blast_db
+#				print "QUERIES: %s" %queryfile
+
 				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, blast_out, args.n_threads) 
 				print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
 
 
-				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -out %s -num_threads %i" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
-				cmdlist = shlex.split(blast_cmd)
-				stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
+#				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -out %s -num_threads %i" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
+#				cmdlist = shlex.split(blast_cmd)
+#				stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
 
 
 				blast_handle = NcbiblastxCommandline(cmd='blastn', query=queryfile, db=blast_db, evalue=0.001, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
@@ -990,6 +1210,8 @@ if args.blast or args.phyloplace:
 #			print "taxonomy_count['species']: %s" %taxonomy_count['species']
 			for species in species_count.keys():
 #				print species
+#				if not taxonomy_count.has_key('species'):
+#					taxonomy_count['species'] = []
 				if not taxonomy_count['species'].has_key(species):
 					taxonomy_count['species'][species] = []
 				taxonomy_count['species'][species].extend(species_count[species])
@@ -1012,7 +1234,7 @@ if args.blast or args.phyloplace:
 
 #			print tax_dict['tax_id']
 			for tax_rank in reversed(tax_dict["tax_id"]):
-#				print tax_rank
+#				print "The current rank: %s" %tax_rank
 				if taxonomy_count.has_key(tax_rank):
 					total_per_rank_count=int(0)
 					output=[]
