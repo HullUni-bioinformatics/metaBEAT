@@ -104,6 +104,11 @@ biom_group.add_argument("--mock_meta_data", help="add mock metadata to the sampl
 parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
 args = parser.parse_args()
 
+if len(sys.argv) < 2:	#if the script is called without any arguments display the usage
+    parser.print_usage()
+    sys.exit(1)
+
+
 ###FUNCITONS
 def file_check(file_to_test, optional_message=None):
 	"tests if a file exists"
@@ -131,56 +136,10 @@ def write_out_refs_to_fasta(ref_seqs):
 #	OUT_temp.close()
 
 
-
-#def assess_file_format(infile, sep="\t", is_col_num=None, min_col_num=None, max_col_num=None, format_list=['genbank','gb','fasta','fa','ab1','ab1','fastq','fq'], columns=['sample','format','file','file','barcode','barcode'], ref=None, que=None):
-#	"The function checks for correct formatting of input file"
-#	if ref:
-#		min_col_num = 2
-#		max_col_num = 2
-#		mi-ma = 2
-#		format_list=format_list[:2]
-#		columns = ['file','format']
-#	elif que:
-#		min_col_num = 3
-#		max_col_num = 6
-#		mi-ma = "%s-%s" %(min_col_num, max_col_num)
-#		format_list=format_list[2:]
-#		columns = ['sample','format','file','optional']
-#	lines = [line.strip() for line in open(infile)]
-#	if not lines:
-#		sys.exit("%s is an empty file" %infile)
-#	for line in lines:
-#		data = line.split(sep)
-#		if len(data) > max_col_num or len(data) < min_col_num:
-#			sys.exit("%s is incorrectly formatted. We expect %i columns separated by \"%s\": <%s>" %(infile, mi-ma, sep, sep.join(columns)))
-#		
-#		for i in range(len(columns)):
-#			if columns[i] is 'format':
-#				if not data[i] in format_list:
-#					sys.exit("%s is not an accepted format. Currently accepted are: %s" %(data[format_column-1], format_list))
-#			
-#			
-#			file_indices=[i for i, x in enumerate(format_list) if x == 'file']
-#			for col in file_indices:
-#				if not os.path.isfile(col):
-#					sys.exit("%s is not a valid file" %col)
-#
-#			return data
 ###########
 
 
 ####START OF MAIN PROGRAM
-#if not args.querylist:
-#	print "\nmetabeat expects at least a query file\n"
-#	parser.print_help()
-#	sys.exit()
-
-if args.REFlist:
-	file_check(file_to_test=args.REFlist, optional_message="\nprovided reference file is not a valid file")
-else:
-	print "\nmetaBEAT expects at least a reference file\n"
-	parser.print_help()
-	sys.exit()
 
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
@@ -200,11 +159,9 @@ if args.phyloplace:
 	args.refpkg = os.path.abspath(args.refpkg) 
 
 
-if not os.path.isfile(args.REFlist):
-	print "no valid reference file supplied\n"
-	parser.print_help()
-	sys.exit(0)
-else:
+if args.REFlist:
+	file_check(file_to_test=args.REFlist, optional_message="\nprovided reference file is not a valid file")
+	
 	refdata_files = [line.strip() for line in open(args.REFlist)]
 	if not refdata_files:
 		print "reference file is empty\n"
