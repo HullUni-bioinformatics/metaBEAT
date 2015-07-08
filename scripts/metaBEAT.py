@@ -965,9 +965,9 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			elif approach == 'blast':
 				query_count += 1
-				if not os.path.exists('BLAST'):
-					os.makedirs('BLAST')
-				os.chdir('BLAST')
+				if not os.path.exists('BLAST_'+str(args.min_ident)):
+					os.makedirs('BLAST_'+str(args.min_ident))
+				os.chdir('BLAST_'+str(args.min_ident))
 				print "\n### RUNNING LOCAL BLAST ###\n"
 
 				print "running blast search against local database %s" % blast_db
