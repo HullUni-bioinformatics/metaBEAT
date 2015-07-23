@@ -42,9 +42,12 @@ seq_info = ['"seqname","accession","tax_id","species_name","is_type"']
 records = {}
 reference_taxa = {}
 taxids = defaultdict(int)
+denovo_taxa = {}
+denovo_count = 0
 date = time.strftime("%d-%b-%Y").upper()
 files_to_barcodes = defaultdict(dict)
 global_taxa = defaultdict(dict)
+global_clust = defaultdict(dict)
 query_count = 0
 global_taxids_hit = defaultdict(int)
 metadata = defaultdict(dict)
@@ -343,6 +346,13 @@ for reffile, refformat in references.items():
 				taxon = Entrez.read(handle)
 				if not taxon["IdList"]:	#if the search term has not yielded any result
 					print "WARNING: %s in record '%s' was not recognized as a valid species name -> record will be ommitted from further analyses.\nI'll put the sequence record in the file 'skipped_seqs.fasta' in case you want to fix it." % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].name)
+					print "trying genus %s" %seqs[i].features[0].qualifiers['organism'][0].split(" ")[0]
+					handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0].split(" ")[0])
+					taxon = Entrez.read(handle)
+					if taxon['IdList']:
+						print taxon['IdList'][0]
+					taxids[taxon['IdList'][0]]+= 1
+					denovo_taxa[taxon['IdList'][0]] = seqs[i].features[0].qualifiers['organism'][0]  #add species that has not been found in taxdump. The value is the taxid of the genus
 					skipped_ref_seqs.append(seqs.pop(i))
 
 				else:
@@ -430,6 +440,14 @@ if args.taxids:
 #			print "key: %s - %s" % (key, array[-1])
 #			print len(array)
 			tax_dict[key]=array
+			if denovo_taxa.has_key(key):
+				denovo_count += 1
+				array[0] = key
+				array[1] = 'species'
+				array[2] = denovo_taxa[key]
+				array[-1] = "denovo%s" %denovo_count	
+				tax_dict["denovo%s" %denovo_count] = array
+
 
 #		print "============"
 #for key,value in tax_dict.items():
@@ -977,9 +995,9 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
 
 
-#				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -out %s -num_threads %i" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
-#				cmdlist = shlex.split(blast_cmd)
-#				stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
+				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -out %s -num_threads %i" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
+				cmdlist = shlex.split(blast_cmd)
+				stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
 
 
 				blast_handle = NcbiblastxCommandline(cmd='blastn', query=queryfile, db=blast_db, evalue=0.001, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
@@ -1219,12 +1237,19 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 						if tax_rank != 'nohit':	#dont include the nohits in the biom output
 							if not global_taxa[tax_rank].has_key(hit):
 								global_taxa[tax_rank][hit] = []
+								global_clust[tax_rank][hit] = []
 								if query_count >= 1: #if this is already the 2+ query and the taxon has not been seen so far, I need to fill up the previous samples with count 0 for this taxon
 									for i in range(query_count-1):
+										print "fill: %s" %hit
 										global_taxa[tax_rank][hit].append(int(0))
+										global_taxa[tax_rank][hit].append(int(0))
+
+								
 								global_taxa[tax_rank][hit].append(int(current_count))
+								global_clust[tax_rank][hit].append(int(len(taxonomy_count[tax_rank][hit])))
 							else:
 								global_taxa[tax_rank][hit].append((current_count))
+								global_clust[tax_rank][hit].append((len(taxonomy_count[tax_rank][hit])))
 						
 						### print out reads
 						if current_reads: #This list is only non empty if either -e or -E was specified
@@ -1285,6 +1310,8 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				for taxon in global_taxa[rank]:
 					if len(global_taxa[rank][taxon]) < query_count:	#if the number of entries for the current taxon is smaller than the current index
 						global_taxa[rank][taxon].append(int(0))
+						global_clust[rank][taxon].append(int(0))
+						
 
 #			print "TAXIDS hit by query %s: %s" %(queryID, global_taxids_hit)
 
@@ -1294,7 +1321,7 @@ if args.blast or args.phyloplace:
 
 	print "\n##### DONE PROCESSING ALL SAMPLES #####"		
 	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
-	
+	clust_to_biom = []
 	data_to_biom = []
 	observ_ids=[]
 	for tax_rank in reversed(tax_dict["tax_id"]):
@@ -1305,9 +1332,11 @@ if args.blast or args.phyloplace:
 #				print "%s: %s" %(out, global_taxa[tax_rank][out])
 				observ_ids.append(out)
 				data_to_biom.append(global_taxa[tax_rank][out])
+				clust_to_biom.append(global_clust[tax_rank][out])
 
 	#print data_to_biom
 	data = np.asarray(data_to_biom)
+	clust_data = np.asarray(clust_to_biom)
 #	print "data:\n%s" %data
 #	print len(data)
 
@@ -1394,8 +1423,10 @@ if args.blast or args.phyloplace:
 #	print len(observation_metadata)
 
 	table = Table(data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Example Table')
+	clust_table = Table(clust_data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Cluster Table')
 
-#	print table
+
+#	print tables
 	out=open(args.output_prefix+".biom","w")
 	table.to_json('metaBEAT v.'+VERSION, direct_io=out)
 	out.close()
@@ -1404,5 +1435,12 @@ if args.blast or args.phyloplace:
 	out.write(table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
 	out.close()
 
+	out=open(args.output_prefix+"_clusters.biom","w")
+	clust_table.to_json('metaBEAT v.'+VERSION, direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"_clusters.tsv","w")
+	out.write(clust_table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
+	out.close()
 print "\n##### DONE! #####\n"
 #print "remove read-pair id from extended reads. \n output overall run summary, i.e. per sample: raw reads, trimmed reads, merged reads, clusters, etc. \n make OTU table output standard"
