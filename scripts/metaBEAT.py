@@ -43,8 +43,8 @@ records = {}
 reference_taxa = {}
 taxids = defaultdict(int)
 denovo_taxa = {}
-denovo_count = 0
 date = time.strftime("%d-%b-%Y").upper()
+denovo_count = 1
 files_to_barcodes = defaultdict(dict)
 global_taxa = defaultdict(dict)
 global_clust = defaultdict(dict)
@@ -124,17 +124,20 @@ def file_check(file_to_test, optional_message=None):
 		sys.exit(exit_message)
 	return True
 
-def write_out_refs_to_fasta(ref_seqs):
+def write_out_refs_to_fasta(ref_seqs, ref_taxids = {}):
 	print "write out reference sequences to refs.fasta\n"
 	OUT = open("refs.fasta","w")
 #	OUT_temp = open ("temp_refs.fasta","w")
 	for record in ref_seqs:
 #		outstring = ">%s\n%s" % (record.features[0].qualifiers['db_xref'][0].split(":")[1], record.seq) #note that the header of the sequence will be the taxid
-		outstring = ">%s|%s\n%s" % (record.id, record.features[0].qualifiers['db_xref'][0].split(":")[1], record.seq) #note that the header of the sequence will be the taxid
-		
+		if record.features[0].qualifiers.has_key('db_xref'):
+			outstring = ">%s|%s|%s\n%s" % (record.id, record.features[0].qualifiers['db_xref'][0].split(":")[1], record.features[0].qualifiers['organism'][0], record.seq) #note that the header of the sequence will be the taxid
+		else:
+			outstring = ">%s|%s|%s\n%s" % (record.name, ref_taxids[record.features[0].qualifiers['organism'][0]], record.features[0].qualifiers['organism'][0], record.seq)
 #		outstring2 = ">%s\n%s" % (record.id, record.seq)
 		OUT.write(outstring + "\n")
 #		OUT_temp.write(outstring2 + "\n")
+
 	OUT.close()
 #	OUT_temp.close()
 
@@ -317,15 +320,16 @@ print "\n######## PROCESSING REFERENCE DATA ########\n"
 
 for reffile, refformat in references.items():
 	seqs=list(SeqIO.parse(reffile,refformat, alphabet=generic_dna))
-	print "processing %s (containing %i records)" % (reffile,len(seqs))
+	print "\nprocessing %s (containing %i records)" % (reffile,len(seqs))
 	for i in reversed(range(len(seqs))):
 #		print seqs[i].description
+		taxid = ''
 		if args.rec_check:
-			if not seqs[i].id in records:	#records list keeps track of all records.
-				records[seqs[i].id] = 1
+			if not seqs[i].name in records:	#records list keeps track of all records.
+				records[seqs[i].name] = 1
 			else:				#if a record id occurs again, say in the case of custom fasta sequences the record id is the first name in the fasta header, e.g. the Genus name
-				records[seqs[i].id] += 1
-				seqs[i].id += "_%s" % records[seqs[i].id]
+				records[seqs[i].name] += 1
+				seqs[i].name += "_%s" % records[seqs[i].name]
 
 			if not seqs[i].features:		#if the record does not have a source feature yet. Will happen for records originating from custom fasta files
 #				print "the record has no features\n"	
@@ -333,55 +337,71 @@ for reffile, refformat in references.items():
 				seqs[i].features[0].qualifiers['original_desc'] = seqs[i].description
 			
 			if not seqs[i].features[0].qualifiers.has_key('organism'):	#if the record does not have an organism key. Again will happen for custom fasta sequences
-				print seqs[i].description
-#				seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].description.split(" ")[0], seqs[i].description.split(" ")[1])] #add an organism key and make it the first 2 words in the record description will are per default the first 2 words in the fasta header
-				seqs[i].features[0].qualifiers['organism'] = ["%s" % seqs[i].description.split(" ")[0]]	#add an organism key and make it the first word in the record description will are per default the first 2 words in the fasta header
-				sp_search = re.compile('^sp$|^sp[.]$|^sp[0-9]+$')
-				if not sp_search.match(seqs[i].description.split(" ")[1]):
-					seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].description.split(" ")[1])]	#if the second word in the description is not 'sp' or 'sp.', i.e. it is unknown, then add also the second word to the organism field
+#				print seqs[i].description
+				seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].description.split(" ")[0], seqs[i].description.split(" ")[1])] #add an organism key and make it the first 2 words in the record description will are per default the first 2 words in the fasta header
+#				seqs[i].features[0].qualifiers['organism'] = ["%s" % seqs[i].description.split(" ")[0]]	#add an organism key and make it the first word in the record description will are per default the first 2 words in the fasta header
+#				sp_search = re.compile('^sp$|^sp[.]$|^sp[0-9]+$')
+#				if not sp_search.match(seqs[i].description.split(" ")[1]):
+#					seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].description.split(" ")[1])]	#if the second word in the description is not 'sp' or 'sp.', i.e. it is unknown, then add also the second word to the organism field
 
+			if not seqs[i].annotations.has_key('date'):	#set the date in the record if it does not exist
+				seqs[i].annotations['date'] = date
+				
 			if not seqs[i].features[0].qualifiers['organism'][0] in reference_taxa:	#if the organism name has not yet been encountert the following lines will find the corresponding taxid, add it to the record and store it in the reference_taxa dictionary
 #				print "seeing %s for the first time" %seqs[i].features[0].qualifiers['organism'][0]
 				handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0])	#search the taxonomy database for the taxon by organism name
 				taxon = Entrez.read(handle)
 				if not taxon["IdList"]:	#if the search term has not yielded any result
-					print "WARNING: %s in record '%s' was not recognized as a valid species name -> record will be ommitted from further analyses.\nI'll put the sequence record in the file 'skipped_seqs.fasta' in case you want to fix it." % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].name)
-					print "trying genus %s" %seqs[i].features[0].qualifiers['organism'][0].split(" ")[0]
+					print "\nWARNING: \"%s\" in record '%s' was not recognized as a valid taxon name on Genbank." % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].name)
+					print "I'll try if just \"%s\" is valid" %seqs[i].features[0].qualifiers['organism'][0].split(" ")[0]
 					handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0].split(" ")[0])
 					taxon = Entrez.read(handle)
-					if taxon['IdList']:
-						print taxon['IdList'][0]
-					taxids[taxon['IdList'][0]]+= 1
-					denovo_taxa[taxon['IdList'][0]] = seqs[i].features[0].qualifiers['organism'][0]  #add species that has not been found in taxdump. The value is the taxid of the genus
-					skipped_ref_seqs.append(seqs.pop(i))
-
+					if taxon['IdList']: #if the search with just the first term of the taxon name yielded a result
+						tax_rank = ''
+						handle = Entrez.efetch(db="Taxonomy", id=taxon['IdList'][0]) #fetch the taxonomy to this taxid
+						recs = Entrez.read(handle)
+						tax_rank = recs[0]["Rank"]
+						print "ok - found it with taxid \"%s\" at taxonomic rank \"%s\"" %(taxon['IdList'][0],tax_rank)
+						print "I am interpreting \"%s\" as a valid species name and will assign a dummy taxid to it" %seqs[i].features[0].qualifiers['organism'][0]
+						taxids[taxon['IdList'][0]]+= 1
+						denovo_taxa[taxon['IdList'][0]] = seqs[i].features[0].qualifiers['organism'][0]  #add species that has not been found in taxdump. The value is the taxid of the genus
+						reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = "denovo"+str(denovo_count)
+						denovo_count += 1
+						print "WARNING: WILL NOT ADD ANY INFORMATION TO seq_info LIST AT THIS STAGE - NEEDS TO BE FIXED IF PHYLOGENETIC PLACEMENT IS PLANNED"
+					else:
+						print "WARNING: Nothing found. Something's wrong with this record - typo? I'll put the sequence record in the file 'skipped_seqs.fasta' in case you want to fix it."
+						skipped_ref_seqs.append(seqs.pop(i))
+					
+	
 				else:
+					seqs[i].id = seqs[i].name
 					taxid = taxon["IdList"][0]	#the taxid is the first element in the dictionary that is returned from Entrez
 					seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + taxid]	#update the db_rxref qualifier with the correct taxid
 					taxids[taxid] += 1
 #					print "adding %s with taxid: %s to the dictionary" %(seqs[i].features[0].qualifiers['organism'][0], taxid)
 					reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
+
 			else:
+				seqs[i].id = seqs[i].name
 				seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]]
+				taxid = reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]
 #				print "Have seen %s before. The taxid is: %s" %(seqs[i].features[0].qualifiers['organism'][0], reference_taxa[seqs[i].features[0].qualifiers['organism'][0]])
 
-			current = '"%s","%s","%s","%s",0' % (seqs[i].id, seqs[i].id, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
-			seq_info.extend([current])	#add the string to the seq_info array
+			if len(taxid) > 0:
+				current = '"%s","%s","%s","%s",0' % (seqs[i].name, seqs[i].name, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
+				seq_info.extend([current])	#add the string to the seq_info array
 
-			if not seqs[i].annotations.has_key('date'):	#set the date in the record if it does not exist
-				seqs[i].annotations['date'] = date
-				
 		else:
 			taxid = seqs[i].features[0].qualifiers['db_xref'][0].split(":")[1]
 #			print taxid
 			taxids[taxid] += 1
-			current = '"%s","%s","%s","%s",0' % (seqs[i].id, seqs[i].id, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
+			current = '"%s","%s","%s","%s",0' % (seqs[i].name, seqs[i].name, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
 			seq_info.extend([current])	#add the string to the seq_info array
 
 	if skipped_ref_seqs:
 		SKIPPED = open("skipped_seqs.fasta","w")
 		for rec in skipped_ref_seqs:
-			outstring = ">%s\n%s" %(rec.description, rec.seq)
+			outstring = ">%s\n%s" %(rec.name, rec.seq)
 			SKIPPED.write(outstring + "\n")
 			
 		SKIPPED.close()
@@ -415,7 +435,9 @@ if args.taxids:
 	cmd = "taxit taxtable -d %s -t taxids.txt -o taxa.csv" %taxonomy_db# -o taxa.csv"
 #	cmd = "taxit taxtable -d %s -t taxids.txt" %taxonomy_db# -o taxa.csv"
 	print "running taxit to generate reduced taxonomy table"
-	print cmd
+	if len(denovo_taxa) > 0:
+		print "WARNING: any taxa without valid taxid will not be included -  NEEDS TO BE FIXED IF PHYLOGENETIC PLACEMENT IS PLANNED"
+	print "\n"+cmd
 
 #	handle = subprocess.call(taxtable, shell=True)
 	taxtable,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
@@ -441,13 +463,13 @@ if args.taxids:
 #			print len(array)
 			tax_dict[key]=array
 			if denovo_taxa.has_key(key):
-				denovo_count += 1
+#				denovo_count += 1
 				array[0] = key
 				array[1] = 'species'
 				array[2] = denovo_taxa[key]
-				array[-1] = "denovo%s" %denovo_count	
-				tax_dict["denovo%s" %denovo_count] = array
-
+				array[-1] = reference_taxa[denovo_taxa[key]] #"denovo%s" %denovo_count	
+				tax_dict[reference_taxa[denovo_taxa[key]]] = array   #"denovo%s" %denovo_count] = array
+#				print "to add:\n%s" %array
 
 #		print "============"
 #for key,value in tax_dict.items():
@@ -462,12 +484,12 @@ if args.seqinfo:
 	f.close()
 
 if args.fasta:	#this bit writes out the sequences that will become the reference dataset
-	write_out_refs_to_fasta(ref_seqs=all_seqs)
+	write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
 
 if args.blast:
 	print "\n### BUILDING BLAST DATABASE ###\n"
 	if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
-		write_out_refs_to_fasta(ref_seqs=all_seqs)
+		write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
 #	print "building blast db for marker %s\n" % args.marker
 	makeblastdb="makeblastdb -in refs.fasta -dbtype nucl -out %s_blast_db" % args.marker
 	print makeblastdb
@@ -715,7 +737,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 					ex_out.close()
 					os.rename("ex_temp.fastq.gz", queryID+'.extendedFrags.fastq.gz')						
 				
-				print read_stats
+#				print read_stats
 
 #				print "\n### JUST SOME FILE WRANGLING ###\n"
 
@@ -1211,9 +1233,10 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 			for tax_rank in reversed(tax_dict["tax_id"]):
 #				print "The current rank: %s" %tax_rank
 				if taxonomy_count.has_key(tax_rank):
+#					print "The current rank: %s" %tax_rank
+#					print taxonomy_count[tax_rank]
 					total_per_rank_count=int(0)
 					output=[]
-#					print taxonomy_count[tax_rank]
 					for hit in sorted(taxonomy_count[tax_rank].keys()):
 #						print hit
 #						print "\t%s: %i" % (hit, len(taxonomy_count[tax_rank][hit])) #This is the count of unique clusters that were assigned
@@ -1233,23 +1256,23 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 						output.append("\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID]))
 #						print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
 
-						#### add data to global data
-						if tax_rank != 'nohit':	#dont include the nohits in the biom output
-							if not global_taxa[tax_rank].has_key(hit):
-								global_taxa[tax_rank][hit] = []
-								global_clust[tax_rank][hit] = []
-								if query_count >= 1: #if this is already the 2+ query and the taxon has not been seen so far, I need to fill up the previous samples with count 0 for this taxon
-									for i in range(query_count-1):
-										print "fill: %s" %hit
-										global_taxa[tax_rank][hit].append(int(0))
-										global_taxa[tax_rank][hit].append(int(0))
+						#### add data to global dictionary for biom table
+#						if tax_rank != 'nohit':	#dont include the nohits in the biom output
+						if not global_taxa[tax_rank].has_key(hit):
+							global_taxa[tax_rank][hit] = []
+							global_clust[tax_rank][hit] = []
+							if query_count >= 2: #if this is already the 2+ query and the taxon has not been seen so far, I need to fill up the previous samples with count 0 for this taxon
+								for i in range(query_count-1):
+#										print "fill: %s" %hit
+									global_taxa[tax_rank][hit].append(int(0))
+									global_clust[tax_rank][hit].append(int(0))
 
 								
-								global_taxa[tax_rank][hit].append(int(current_count))
-								global_clust[tax_rank][hit].append(int(len(taxonomy_count[tax_rank][hit])))
-							else:
-								global_taxa[tax_rank][hit].append((current_count))
-								global_clust[tax_rank][hit].append((len(taxonomy_count[tax_rank][hit])))
+							global_taxa[tax_rank][hit].append(int(current_count))
+							global_clust[tax_rank][hit].append(int(len(taxonomy_count[tax_rank][hit])))
+						else:
+							global_taxa[tax_rank][hit].append((current_count))
+							global_clust[tax_rank][hit].append((len(taxonomy_count[tax_rank][hit])))
 						
 						### print out reads
 						if current_reads: #This list is only non empty if either -e or -E was specified
@@ -1334,6 +1357,12 @@ if args.blast or args.phyloplace:
 				data_to_biom.append(global_taxa[tax_rank][out])
 				clust_to_biom.append(global_clust[tax_rank][out])
 
+	#take care of nohits if any exist
+	if global_taxa.has_key('nohit'):
+		observ_ids.append('unassigned')
+		data_to_biom.append(global_taxa['nohit']['no_hit'])
+		clust_to_biom.append(global_taxa['nohit']['no_hit'])
+
 	#print data_to_biom
 	data = np.asarray(data_to_biom)
 	clust_data = np.asarray(clust_to_biom)
@@ -1386,44 +1415,98 @@ if args.blast or args.phyloplace:
 	levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
 #	print "These taxids were identified:\n%s" %global_taxids_hit
 	for tid in global_taxids_hit.keys():
+		ind_taxonomy=[]
 #		print "fetch taxonomy for taxid: %s" %tid
-		handle = Entrez.efetch(db="Taxonomy", id=tid)      #search the taxonomy database for the taxon by organism name
+		#first check if there is a valid taxonomy available for the taxon on Genbank based on the taxon name (not using taxid because a dummy taxid such as 'denovo7' will yield a result because entrez will interpret this as taxid '7' which will yield a bacterium
+		handle = Entrez.esearch(db="Taxonomy", term=tax_dict[tid][2])      #search the taxonomy database for the taxon by organism name
 		taxon = Entrez.read(handle)
-#		print taxon[0]['Lineage']
-#		print taxon[0]['ScientificName']
-		ind_taxonomy = []
-	
-		for lev in levels:
-#			print lev
-			for i in range(len(taxon[0]['LineageEx'])):
-				if taxon[0]['LineageEx'][i]['Rank'] == lev:
-					string = taxon[0]['LineageEx'][i]['ScientificName']
-					string = string.replace(' ', '_')
-#					print "%s%s" %(syn[lev], string)
-					ind_taxonomy.append('%s%s' %(syn[lev], string))
-					break
+		if taxon["IdList"]:	#That this exists means there is a valid taxonomy for this taxon name
+			handle = Entrez.efetch(db="Taxonomy", id=tid)      #Now I can just fetch the taxonomy via the taxid
+			taxon = Entrez.read(handle)
+			for lev in levels: #this will go through all valid taxonomic levels as defined in the list above
+#				print lev
+				for i in range(len(taxon[0]['LineageEx'])):	#loop through the taxonomy for the current taxon
+					if taxon[0]['LineageEx'][i]['Rank'] == lev:	#if we hit one of the valid levels
+						string = taxon[0]['LineageEx'][i]['ScientificName'].replace(' ','_') #get the actual taxonomy at this level (and replace any spaces with _ in case
+#						print "%s%s" %(syn[lev], string)
+						ind_taxonomy.append('%s%s' %(syn[lev], string)) #add the taxonomy level abbreviation as defined in the dictionary above to the string and add the whole thing to the list holding the full taxonomy for this taxon
+						break	#if I have found something at this level I can just break out of the loop and go to the next level
 			
-		if len(ind_taxonomy) < len(levels):
-#			print taxon[0]['Rank']
-			if taxon[0]['Rank'] in levels:
-				index = levels.index(taxon[0]['Rank'])
-#				print "index: %i" %index
-				ind_taxonomy.append('%s%s' %(syn[levels[index]], taxon[0]['ScientificName']))
-       	 
-	
-#		print ind_taxonomy			
-	
-		Taxonomy[taxon[0]['ScientificName']]['taxonomy'] = ind_taxonomy
+			if len(ind_taxonomy) < len(levels):	#The LineageEx list only contains the taxonomy until the parent
+#				print taxon[0]['Rank']
+				if taxon[0]['Rank'] in levels:	#check if the actual taxonomy that was assigned is at a valid level
+					index = levels.index(taxon[0]['Rank'])	#if it is then get the index of this level
+#					print "index: %i" %index
+					ind_taxonomy.append('%s%s' %(syn[levels[index]], taxon[0]['ScientificName'].replace(' ','_'))) #and add it to the taxonomy list
+
+#			print ind_taxonomy
+
+		else:	#if there was no valid taxonomy found for the taxon name, this is interpreted as being denovo taxon, i.e. a taxon that has no Genbank taxid yet
+#			print "DENOVO TAXON"
+			handle = Entrez.efetch(db="Taxonomy", id=tax_dict[tid][0])      #search the taxonomy database for the taxon by taxid
+			taxon = Entrez.read(handle)
+			for lev in levels:
+				for i in range(len(taxon[0]['LineageEx'])):
+					if taxon[0]['LineageEx'][i]['Rank'] == lev:
+						string = taxon[0]['LineageEx'][i]['ScientificName'].replace(' ','_')
+#						print "%s%s" %(syn[lev], string)
+						ind_taxonomy.append('%s%s' %(syn[lev], string))
+						break
+
+			if len(ind_taxonomy) < len(levels):
+#				print taxon[0]['Rank']
+				if taxon[0]['Rank'] in levels:
+					index = levels.index(taxon[0]['Rank'])
+#					print "index: %i" %index
+					ind_taxonomy.append('%s%s' %(syn[levels[index]], taxon[0]['ScientificName'].replace(' ','_')))
+				
+#			print ind_taxonomy	#at this stage this holds the taxonomy of the parents
+			#The assumption is that denovo taxa are always present in the reference as species
+			if not len(ind_taxonomy) == len(levels)-1: # that means the parent taxonomy is not yet at genus level so we need to fill the levels up to species
+				for l in levels[len(ind_taxonomy):-1]:
+					ind_taxonomy.append('%sunknown' %syn[l])
+
+			ind_taxonomy.append('s__%s' %tax_dict[tid][2].replace(' ','_')) #now we just add the denovo species to the taxonomy
+#			print ind_taxonomy
+
+#		Taxonomy[taxon[0]['ScientificName']]['taxonomy'] = ind_taxonomy
+		Taxonomy[tax_dict[tid][2]]['taxonomy'] = ind_taxonomy
+
 		
+#	print Taxonomy
+
+	if observ_ids[-1] == 'unassigned':
+		ind_taxonomy = []
+		for lev in levels:
+			ind_taxonomy.append('%sunassigned' %syn[lev])
+
+		Taxonomy['unassigned']['taxonomy'] = ind_taxonomy
+
 	for taxon in observ_ids:
-#		print Taxonomy[taxon]
+#		print "%s: %s" %(taxon, Taxonomy[taxon])
 		observation_metadata.append(Taxonomy[taxon])
 	
 #	print "observation metadata:\n%s" %observation_metadata
 #	print len(observation_metadata)
 
-	table = Table(data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Example Table')
-	clust_table = Table(clust_data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Cluster Table')
+### double check all inputs for table
+#	print "data: %s" %data
+#	print len(data)
+#	print "cluster data: %s" %clust_data
+#	print len(clust_data)
+#	print "observed_ids: %s" %observ_ids
+#	print len(observ_ids)
+#	print "sample ids: %s" %sample_ids
+#	print len(sample_ids)
+#	print "observation metadata: %s" %observation_metadata
+#	print len(observation_metadata)
+#	print "sample_metadata: %s" %sample_metadata
+#	print len(sample_metadata)
+#
+#	print "\n"
+
+	table = Table(data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Read count Table')
+	clust_table = Table(clust_data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Cluster count Table')
 
 
 #	print tables
