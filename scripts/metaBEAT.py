@@ -1361,7 +1361,7 @@ if args.blast or args.phyloplace:
 	if global_taxa.has_key('nohit'):
 		observ_ids.append('unassigned')
 		data_to_biom.append(global_taxa['nohit']['no_hit'])
-		clust_to_biom.append(global_taxa['nohit']['no_hit'])
+		clust_to_biom.append(global_clust['nohit']['no_hit'])
 
 	#print data_to_biom
 	data = np.asarray(data_to_biom)
