@@ -27,6 +27,7 @@ ADD external_software/fastx_clipper /usr/bin/
 ADD external_software/fastx_reverse_complement /usr/bin/
 ADD external_software/process_shortreads /usr/bin/
 
+RUN mkdir /home/working
 RUN mkdir /src
 ENV PATH /src:$PATH
 RUN taxit new_database -d /src/taxonomy.db
@@ -40,7 +41,6 @@ ADD external_software/fastq_quality_trimmer /usr/bin/
 ADD external_software/fastq_quality_filter /usr/bin/
 
 #create mount point at /working
-RUN mkdir /home/working
 RUN mkdir /home/working/IN
 RUN mkdir /home/working/OUT
 VOLUME /home/working
