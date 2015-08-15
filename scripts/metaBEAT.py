@@ -324,31 +324,31 @@ for reffile, refformat in references.items():
 	for i in reversed(range(len(seqs))):
 #		print seqs[i].description
 		taxid = ''
-		if args.rec_check:
-			if not seqs[i].name in records:	#records list keeps track of all records.
-				records[seqs[i].name] = 1
-			else:				#if a record id occurs again, say in the case of custom fasta sequences the record id is the first name in the fasta header, e.g. the Genus name
-				records[seqs[i].name] += 1
-				seqs[i].name += "_%s" % records[seqs[i].name]
+		if not seqs[i].name in records:	#records list keeps track of all records.
+			records[seqs[i].name] = 1
+		else:				#if a record id occurs again, say in the case of custom fasta sequences the record id is the first name in the fasta header, e.g. the Genus name
+			records[seqs[i].name] += 1
+			seqs[i].name += "_%s" % records[seqs[i].name]
 
-			if not seqs[i].features:		#if the record does not have a source feature yet. Will happen for records originating from custom fasta files
-#				print "the record has no features\n"	
-				seqs[i].features.append(SeqFeature(FeatureLocation(0,len(seqs[i].seq),strand=1), type="source"))	#create source feature
-				seqs[i].features[0].qualifiers['original_desc'] = seqs[i].description
+		if not seqs[i].features:		#if the record does not have a source feature yet. Will happen for records originating from custom fasta files
+#			print "the record has no features\n"	
+			seqs[i].features.append(SeqFeature(FeatureLocation(0,len(seqs[i].seq),strand=1), type="source"))	#create source feature
+			seqs[i].features[0].qualifiers['original_desc'] = seqs[i].description
 			
-			if not seqs[i].features[0].qualifiers.has_key('organism'):	#if the record does not have an organism key. Again will happen for custom fasta sequences
-#				print seqs[i].description
-				seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].description.split(" ")[0], seqs[i].description.split(" ")[1])] #add an organism key and make it the first 2 words in the record description will are per default the first 2 words in the fasta header
-#				seqs[i].features[0].qualifiers['organism'] = ["%s" % seqs[i].description.split(" ")[0]]	#add an organism key and make it the first word in the record description will are per default the first 2 words in the fasta header
-#				sp_search = re.compile('^sp$|^sp[.]$|^sp[0-9]+$')
-#				if not sp_search.match(seqs[i].description.split(" ")[1]):
-#					seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].description.split(" ")[1])]	#if the second word in the description is not 'sp' or 'sp.', i.e. it is unknown, then add also the second word to the organism field
+		if not seqs[i].features[0].qualifiers.has_key('organism'):	#if the record does not have an organism key. Again will happen for custom fasta sequences
+#			print seqs[i].description
+			seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].description.split(" ")[0], seqs[i].description.split(" ")[1])] #add an organism key and make it the first 2 words in the record description will are per default the first 2 words in the fasta header
+#			seqs[i].features[0].qualifiers['organism'] = ["%s" % seqs[i].description.split(" ")[0]]	#add an organism key and make it the first word in the record description will are per default the first 2 words in the fasta header
+#			sp_search = re.compile('^sp$|^sp[.]$|^sp[0-9]+$')
+#			if not sp_search.match(seqs[i].description.split(" ")[1]):
+#				seqs[i].features[0].qualifiers['organism'] = ["%s %s" % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].description.split(" ")[1])]	#if the second word in the description is not 'sp' or 'sp.', i.e. it is unknown, then add also the second word to the organism field
 
-			if not seqs[i].annotations.has_key('date'):	#set the date in the record if it does not exist
-				seqs[i].annotations['date'] = date
-				
-			if not seqs[i].features[0].qualifiers['organism'][0] in reference_taxa:	#if the organism name has not yet been encountert the following lines will find the corresponding taxid, add it to the record and store it in the reference_taxa dictionary
-#				print "seeing %s for the first time" %seqs[i].features[0].qualifiers['organism'][0]
+		if not seqs[i].annotations.has_key('date'):	#set the date in the record if it does not exist
+			seqs[i].annotations['date'] = date
+			
+		if not seqs[i].features[0].qualifiers['organism'][0] in reference_taxa:	#if the organism name has not yet been encountert the following lines will find the corresponding taxid, add it to the record and store it in the reference_taxa dictionary
+#			print "seeing %s for the first time" %seqs[i].features[0].qualifiers['organism'][0]
+			if not seqs[i].features[0].qualifiers.has_key('db_xref') or args.rec_check:
 				handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0])	#search the taxonomy database for the taxon by organism name
 				taxon = Entrez.read(handle)
 				if not taxon["IdList"]:	#if the search term has not yielded any result
@@ -380,21 +380,20 @@ for reffile, refformat in references.items():
 					taxids[taxid] += 1
 #					print "adding %s with taxid: %s to the dictionary" %(seqs[i].features[0].qualifiers['organism'][0], taxid)
 					reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
-
 			else:
 				seqs[i].id = seqs[i].name
-				seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]]
-				taxid = reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]
-#				print "Have seen %s before. The taxid is: %s" %(seqs[i].features[0].qualifiers['organism'][0], reference_taxa[seqs[i].features[0].qualifiers['organism'][0]])
-
-			if len(taxid) > 0:
-				current = '"%s","%s","%s","%s",0' % (seqs[i].name, seqs[i].name, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
-				seq_info.extend([current])	#add the string to the seq_info array
-
+				taxid = seqs[i].features[0].qualifiers['db_xref'][0].split(":")[-1]
+				reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
+				taxids[taxid] += 1
+				
 		else:
-			taxid = seqs[i].features[0].qualifiers['db_xref'][0].split(":")[1]
-#			print taxid
-			taxids[taxid] += 1
+			seqs[i].id = seqs[i].name
+			seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]]
+			taxid = reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]
+#			print "Have seen %s before. The taxid is: %s" %(seqs[i].features[0].qualifiers['organism'][0], reference_taxa[seqs[i].features[0].qualifiers['organism'][0]])
+
+		if len(taxid) > 0:
+#			taxids[taxid] += 1
 			current = '"%s","%s","%s","%s",0' % (seqs[i].name, seqs[i].name, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
 			seq_info.extend([current])	#add the string to the seq_info array
 
