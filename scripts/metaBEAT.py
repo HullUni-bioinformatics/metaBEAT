@@ -354,6 +354,7 @@ for reffile, refformat in references.items():
 				for j in range(len(seqs[i].features[0].qualifiers['db_xref'])):
 					if seqs[i].features[0].qualifiers['db_xref'][j].startswith('taxon'):
 						taxid = seqs[i].features[0].qualifiers['db_xref'][j].split(":")[-1]
+#						print "found valid taxid in record: %s" %taxid
 						break
 
 			if not taxid or args.rec_check:
@@ -372,7 +373,10 @@ for reffile, refformat in references.items():
 						print "ok - found it with taxid \"%s\" at taxonomic rank \"%s\"" %(taxon['IdList'][0],tax_rank)
 						print "I am interpreting \"%s\" as a valid species name and will assign a dummy taxid to it" %seqs[i].features[0].qualifiers['organism'][0]
 						taxids[taxon['IdList'][0]]+= 1
-						denovo_taxa[taxon['IdList'][0]] = seqs[i].features[0].qualifiers['organism'][0]  #add species that has not been found in taxdump. The value is the taxid of the genus
+						if denovo_taxa.has_key(taxon['IdList'][0]):
+							denovo_taxa[taxon['IdList'][0]].append(seqs[i].features[0].qualifiers['organism'][0])
+						else:
+							denovo_taxa[taxon['IdList'][0]] = [seqs[i].features[0].qualifiers['organism'][0]]  #add species that has not been found in taxdump. The value is the taxid of the genus
 						reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = "denovo"+str(denovo_count)
 						denovo_count += 1
 						print "WARNING: WILL NOT ADD ANY INFORMATION TO seq_info LIST AT THIS STAGE - NEEDS TO BE FIXED IF PHYLOGENETIC PLACEMENT IS PLANNED"
@@ -478,18 +482,26 @@ if args.taxids:
 #			print "key: %s - %s" % (key, array[-1])
 #			print len(array)
 			tax_dict[key]=array
+#			print "\nregular:"
+#			print "%s: %s" %(key, tax_dict[key])
 			if denovo_taxa.has_key(key):
-#				denovo_count += 1
-				array[0] = key
-				array[1] = 'species'
-				array[2] = denovo_taxa[key]
-				array[-1] = reference_taxa[denovo_taxa[key]] #"denovo%s" %denovo_count	
-				tax_dict[reference_taxa[denovo_taxa[key]]] = array   #"denovo%s" %denovo_count] = array
-#				print "to add:\n%s" %array
+#				print "parent array: %s: %s" %(key, tax_dict[key])
+#				print "there were %s entries for this" %len(denovo_taxa[key])
+				for deno in denovo_taxa[key]:
+#					print "denovo species: %s" %deno
+					local = []
+					local = array[:]
+					local[0] = key
+					local[1] = 'species'
+					local[2] = deno
+					local[-1] = reference_taxa[deno]
+					tax_dict[reference_taxa[deno]] = local
+#					print "new: %s: %s" %(reference_taxa[deno], tax_dict[reference_taxa[deno]])
+#					print local	
+#					print "original: %s: %s" %(key, tax_dict[key])
 
-#		print "============"
-#for key,value in tax_dict.items():
-#	print "%s: %s" % (key, value)
+for key,value in tax_dict.items():
+	print "%s: %s" % (key, value)
 
 if args.seqinfo:
 	print "write out seq_info.csv\n"
