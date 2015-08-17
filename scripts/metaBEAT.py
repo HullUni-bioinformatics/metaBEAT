@@ -350,7 +350,13 @@ for reffile, refformat in references.items():
 			
 		if not seqs[i].features[0].qualifiers['organism'][0] in reference_taxa:	#if the organism name has not yet been encountert the following lines will find the corresponding taxid, add it to the record and store it in the reference_taxa dictionary
 #			print "seeing %s for the first time" %seqs[i].features[0].qualifiers['organism'][0]
-			if not seqs[i].features[0].qualifiers.has_key('db_xref') or args.rec_check:
+			if seqs[i].features[0].qualifiers.has_key('db_xref'):	#there may be more than one 'db_xref' qualifiers, e.g. sometimes there are BOLD ids also in 'db_xref'
+				for j in range(len(seqs[i].features[0].qualifiers['db_xref'])):
+					if seqs[i].features[0].qualifiers['db_xref'][j].startswith('taxon'):
+						taxid = seqs[i].features[0].qualifiers['db_xref'][j].split(":")[-1]
+						break
+
+			if not taxid or args.rec_check:
 				handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0])	#search the taxonomy database for the taxon by organism name
 				taxon = Entrez.read(handle)
 				if not taxon["IdList"]:	#if the search term has not yielded any result
@@ -378,20 +384,28 @@ for reffile, refformat in references.items():
 				else:
 					seqs[i].id = seqs[i].name
 					taxid = taxon["IdList"][0]	#the taxid is the first element in the dictionary that is returned from Entrez
-					seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + taxid]	#update the db_rxref qualifier with the correct taxid
+					if seqs[i].features[0].qualifiers.has_key('db_xref'):
+						for j in range(len(seqs[i].features[0].qualifiers['db_xref'])):
+							if seqs[i].features[0].qualifiers['db_xref'][j].startswith('taxon'):
+								seqs[i].features[0].qualifiers['db_xref'][j] = "taxon:" + taxid	#update the db_rxref qualifier with the correct taxid
+					else:
+						seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + taxid]
 					taxids[taxid] += 1
 #					print "adding %s with taxid: %s to the dictionary" %(seqs[i].features[0].qualifiers['organism'][0], taxid)
 					reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
 			else:
 				seqs[i].id = seqs[i].name
-				if seqs[i].features[0].qualifiers['db_xref'][0].startswith('taxon'):
-					taxid = seqs[i].features[0].qualifiers['db_xref'][0].split(":")[-1]
 				reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
 				taxids[taxid] += 1
 				
 		else:
 			seqs[i].id = seqs[i].name
-			seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]]
+			if seqs[i].features[0].qualifiers.has_key('db_xref'):
+				for j in range(len(seqs[i].features[0].qualifiers['db_xref'])):
+					if seqs[i].features[0].qualifiers['db_xref'][j].startswith('taxon'):
+						seqs[i].features[0].qualifiers['db_xref'][j] = "taxon:" + taxid	#update the db_rxref qualifier with the correct taxid
+			else:
+				seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + taxid]
 			taxid = reference_taxa[seqs[i].features[0].qualifiers['organism'][0]]
 #			print "Have seen %s before. The taxid is: %s" %(seqs[i].features[0].qualifiers['organism'][0], reference_taxa[seqs[i].features[0].qualifiers['organism'][0]])
 
