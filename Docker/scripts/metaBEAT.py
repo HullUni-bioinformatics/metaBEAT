@@ -130,10 +130,12 @@ def write_out_refs_to_fasta(ref_seqs, ref_taxids = {}):
 #	OUT_temp = open ("temp_refs.fasta","w")
 	for record in ref_seqs:
 #		outstring = ">%s\n%s" % (record.features[0].qualifiers['db_xref'][0].split(":")[1], record.seq) #note that the header of the sequence will be the taxid
-		if record.features[0].qualifiers.has_key('db_xref'):
-			outstring = ">%s|%s|%s\n%s" % (record.id, record.features[0].qualifiers['db_xref'][0].split(":")[1], record.features[0].qualifiers['organism'][0], record.seq) #note that the header of the sequence will be the taxid
-		else:
-			outstring = ">%s|%s|%s\n%s" % (record.name, ref_taxids[record.features[0].qualifiers['organism'][0]], record.features[0].qualifiers['organism'][0], record.seq)
+#		if record.features[0].qualifiers.has_key('db_xref'):
+#			outstring = ">%s|%s|%s\n%s" % (record.id, record.features[0].qualifiers['db_xref'][0].split(":")[1], record.features[0].qualifiers['organism'][0], record.seq) #note that the header of the sequence will be the taxid
+#		else:
+#			outstring = ">%s|%s|%s\n%s" % (record.name, ref_taxids[record.features[0].qualifiers['organism'][0]], record.features[0].qualifiers['organism'][0], record.seq)
+		
+		outstring = ">%s|%s|%s\n%s" % (record.name, ref_taxids[record.features[0].qualifiers['organism'][0]], record.features[0].qualifiers['organism'][0], record.seq)
 #		outstring2 = ">%s\n%s" % (record.id, record.seq)
 		OUT.write(outstring + "\n")
 #		OUT_temp.write(outstring2 + "\n")
@@ -382,7 +384,8 @@ for reffile, refformat in references.items():
 					reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
 			else:
 				seqs[i].id = seqs[i].name
-				taxid = seqs[i].features[0].qualifiers['db_xref'][0].split(":")[-1]
+				if seqs[i].features[0].qualifiers['db_xref'][0].startswith('taxon'):
+					taxid = seqs[i].features[0].qualifiers['db_xref'][0].split(":")[-1]
 				reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
 				taxids[taxid] += 1
 				

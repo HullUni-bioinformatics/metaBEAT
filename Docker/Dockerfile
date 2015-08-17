@@ -34,6 +34,7 @@ RUN taxit new_database -d /src/taxonomy.db
 RUN rm /src/taxdmp.zip
 RUN mv /src/taxonomy.db /usr/bin/
 
+ADD scripts/fetch_from_db.py /usr/bin/
 ADD scripts/metaBEAT.py /usr/bin/
 ADD scripts/jplace_to_biom.py /usr/bin/
 
