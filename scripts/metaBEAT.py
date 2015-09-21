@@ -500,8 +500,8 @@ if args.taxids:
 #					print local	
 #					print "original: %s: %s" %(key, tax_dict[key])
 
-for key,value in tax_dict.items():
-	print "%s: %s" % (key, value)
+#	for key,value in tax_dict.items():
+#		print "%s: %s" % (key, value)
 
 if args.seqinfo:
 	print "write out seq_info.csv\n"
