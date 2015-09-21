@@ -1,0 +1,71 @@
+#!/bin/bash
+#
+if [ $# -eq 2 ] && [ $2 != "--xt" ]; then
+    echo "Ignoring $2. Did you mean --xt to block tutorials? ctrl+c to abort"
+fi
+if [ $# -eq 0 ]; then
+    echo "script takes a path to your work dir and an optional --xt flag to supress tutorial downloads"
+    exit
+fi
+
+echo " -------ReproPhylo------- "
+echo "   THINGS TO NOTE"
+echo " -------------------------"
+echo "1. If this is the first startup it can take several minutes to download"
+echo "   the ReproPhylo Docker image"
+echo "2. The container uses localhost port 8888. If you are running a local process"
+echo "   currently using this port, ReproPhylo will not work"
+echo "3. The browser may ask you to manually allow access to the container"
+echo "   (it will give instructions)"
+echo " -------------------------"
+echo "sleeping for 6 secs"
+sleep 6
+echo
+#
+echo "checking if path exists: $1"
+if [ -d $1 ]; then
+   echo "Already exists"
+else
+   echo "Path was not found, creating."
+   mkdir $1
+fi
+echo
+#
+echo "allowing access to x server with xhost +local:root"
+xhost +local:root
+echo
+#
+if [ -d $1/Tutorial_files ]; then
+    echo "Tutorial_files exists in $1"
+    echo
+elif [ $2 = "--xt" ]; then
+    echo "Tutorial files opt out"
+    echo
+elif [ $# -eq 2 ] && [ $2 != "--xt" ] || [ $# -eq 1 ]; then
+    echo "Putting tutorial files in $1"
+    wget -c  https://github.com/HullUni-bioinformatics/ReproPhylo/archive/master.zip
+    unzip -qq master.zip
+    cd ReproPhylo-master
+    cp -r Tutorial_files $1
+    cd ..
+    rm -r ReproPhylo-master
+    rm master.zip
+    echo "Tutorial files are in $1"
+    echo
+fi
+#
+echo "starting reprophylo container"
+sudo docker run --net=host --name mbnotebook -d -p 8888:8888 -e "PASSWORD=password" -v /tmp/.X11-unix:/tmp/.X11-unix:ro -v $1:/home/working -e DISPLAY=$DISPLAY chrishah/metabeat /notebook.sh
+echo
+#
+echo "starting default browser"
+# The container uses localhost port 8888. 
+# If you are running a local process currently using this port, 
+# ReproPhylo will not work.
+#
+# The browser may ask you to manually allow access to the container
+# (it will give instructions)
+echo
+sleep 3
+xdg-open https://localhost:8888
+echo "Jupyter login page is running in localhost:8888"
