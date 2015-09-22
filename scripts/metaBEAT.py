@@ -770,13 +770,13 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 #				print "\n### JUST SOME FILE WRANGLING - Fastq to fasta ###\n"
 
 				files = " ".join(trimmed_files[-2:])
-				cmd="zcat %s | fastx_reverse_complement -Q %i| fastq_to_fasta -Q %i > temp2.fasta" % (files, args.phred, args.phred, args.phred)
+				cmd="zcat %s | fastx_reverse_complement -Q %i| fastq_to_fasta -Q %i > temp2.fasta" % (files, args.phred, args.phred)
 #				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
 				
 				files = " ".join(trimmed_files[:-2])
-				cmd="zcat %s | fastq_to_fasta -Q %i > temp1.fasta" % (files,args.phred, args.phred, args.phred, args.phred)
+				cmd="zcat %s | fastq_to_fasta -Q %i > temp1.fasta" % (files, args.phred)
 #				print cmd
 				cmdlist = shlex.split(cmd)
 				cmd = subprocess.call(cmd, shell=True)
