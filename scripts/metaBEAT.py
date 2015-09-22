@@ -61,6 +61,7 @@ read_counts_out.close()
 #primer_clip_string = ""
 primer_versions = []
 bl_db_extensions = ["nin", "nsq", "nhr"]
+blast_dict = defaultdict(dict) #this will hold the results from parsing the BLAST output
 
 parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool', prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
