@@ -12,6 +12,7 @@ from Bio.Blast import NCBIXML
 from Bio.Alphabet import generic_dna
 import numpy as np
 from biom.table import Table
+import glob
 import random
 import json
 import gzip
@@ -59,6 +60,7 @@ read_counts_out.write(outstring+"\n")
 read_counts_out.close()
 #primer_clip_string = ""
 primer_versions = []
+bl_db_extensions = ["nin", "nsq", "nhr"]
 
 parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool', prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
@@ -88,6 +90,7 @@ reference_group = parser.add_argument_group('Reference', 'The parameters in this
 reference_group.add_argument("-R", "--REFlist", help="file containing a list of files to be used as reference sequences", metavar="<FILE>", action="store")
 reference_group.add_argument("--gb_out", help="output the corrected gb file", metavar="<FILE>", action="store", default="")
 reference_group.add_argument("--rec_check", help="check records to be used as reference", action="store_true")
+reference_group.add_argument("--blast_db", help="path to precompiled blast database", metavar="<PATH>", action="store", default="")
 cluster_group = parser.add_argument_group('Query clustering options', 'The parameters in this group affect read clustering')
 cluster_group.add_argument("--cluster", help="perform clustering of query sequences using vsearch", action="store_true")
 cluster_group.add_argument("--clust_match", help="identity threshold for clustering in percent (default: 1)", type=float, metavar="<FLOAT>", action="store", default="1")
@@ -167,7 +170,24 @@ if args.phyloplace:
 	args.refpkg = os.path.abspath(args.refpkg) 
 
 
-if args.REFlist:
+if args.REFlist and args.blast_db:
+	print "\nPlease provide either a set of custom reference sequences OR a precompiled BLAST database\n"
+	sys.exit()
+elif args.blast_db:
+	for f in glob.glob(args.blast_db+"*"):
+		if not bl_db_extensions:
+			print "ok - seems the precompiled BLAST database contains all necessary files\n"
+			break
+		for i in range(len(bl_db_extensions)):
+			if f.endswith(bl_db_extensions[i]):
+				del bl_db_extensions[i]
+				break
+
+	if bl_db_extensions:	#if I get to this point and there is a BLAST database extension that has not yet encountert then there is no file with this extension
+		print "precompiled BLAST database is not intact\n"
+		sys.exit()
+
+elif args.REFlist:
 	file_check(file_to_test=args.REFlist, optional_message="\nprovided reference file is not a valid file")
 	
 	refdata_files = [line.strip() for line in open(args.REFlist)]
@@ -515,19 +535,23 @@ if args.fasta:	#this bit writes out the sequences that will become the reference
 	write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
 
 if args.blast:
-	print "\n### BUILDING BLAST DATABASE ###\n"
-	if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
-		write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
-#	print "building blast db for marker %s\n" % args.marker
-	makeblastdb="makeblastdb -in refs.fasta -dbtype nucl -out %s_blast_db" % args.marker
-	print makeblastdb
-	cmdlist = shlex.split(makeblastdb)
-	cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE)
-	stdout = cmd.communicate()[0]
-	if args.verbose:
-		print stdout
+	if args.REFlist:
+		print "\n### BUILDING BLAST DATABASE ###\n"
+		if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
+			write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
+#		print "building blast db for marker %s\n" % args.marker
+		makeblastdb="makeblastdb -in refs.fasta -dbtype nucl -out %s_blast_db" % args.marker
+		print makeblastdb
+		cmdlist = shlex.split(makeblastdb)
+		cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE)
+		stdout = cmd.communicate()[0]
+		if args.verbose:
+			print stdout
 	
-	blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
+		blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
+	elif args.blast_db:
+		print "\n### USING PRECOMPILED BLAST DATABASE (%s) ###\n" %args.blast_db
+		blast_db = args.blast_db
 
 print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
