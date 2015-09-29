@@ -132,3 +132,5 @@ __VERSIONS__
 v. 0.6:
  - docker image for this version is: chrishah/metabeat:v0.6
  - used for Kitson et al. 2015
+
+
