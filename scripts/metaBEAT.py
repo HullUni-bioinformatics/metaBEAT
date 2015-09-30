@@ -312,12 +312,14 @@ def check_for_taxonomy_db(tax_db):
     if not tax_db or not os.path.isfile(tax_db): #if no path to the taxonomy database is specifed or the path is not correct
                 if os.path.isfile(os.path.dirname(sys.argv[0])+'/taxonomy.db'): #check if taxonomy.db is present in the same path as the metabeat.py script
                         tax_db = "%s/taxonomy.db" %os.path.dirname(sys.argv[0])
+			print "taxonomy.db found at %s" %tax_db
                 else:
                         print "\nmetaBEAT.py requires a taxonomy database. Please configure it using taxtastic. Per default metaBEAT expects a file 'taxonomy.db' in the same directory that contains the metaBEAT.py script. If you are not happy with that please change the variable 'taxonomy_db' at the top of this script to the correct path to your taxonomy.db file.\n"
                         sys.exit()
     else:
         print "taxonomy.db is present at: %s" %tax_db
 
+    return tax_db
 
 def gi_to_taxid(b_filtered, all_taxids, processed, v=0):
     "This function takes the resulting dictionary from the blast_filter function"
@@ -469,7 +471,7 @@ print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
 
 if args.blast or args.phyloplace:
-	check_for_taxonomy_db(tax_db=taxonomy_db)
+	taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
 
 if args.phyloplace:
 	if not args.refpkg:
@@ -492,6 +494,7 @@ if args.REFlist and args.blast_db:
 elif args.blast_db:
 	for f in glob.glob(args.blast_db+"*"):
 		if not bl_db_extensions:
+			args.blast_db = os.path.abspath(args.blast_db)
 			print "ok - seems the precompiled BLAST database contains all necessary files\n"
 			break
 		for i in range(len(bl_db_extensions)):

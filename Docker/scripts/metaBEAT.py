@@ -12,6 +12,7 @@ from Bio.Blast import NCBIXML
 from Bio.Alphabet import generic_dna
 import numpy as np
 from biom.table import Table
+import glob
 import random
 import json
 import gzip
@@ -31,7 +32,7 @@ import shlex, subprocess
 ##############set this, or put a file called taxonomy.db in the same directory as the metaBEAT.py script############
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 #############################################################################
-VERSION="0.6"
+VERSION="0.7"
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
 methods = []	#this list will contain the list of methods to be applied to the queries
 all_seqs = []
@@ -49,16 +50,17 @@ files_to_barcodes = defaultdict(dict)
 global_taxa = defaultdict(dict)
 global_clust = defaultdict(dict)
 query_count = 0
-global_taxids_hit = defaultdict(int)
+global_taxids_hit = []
 metadata = defaultdict(dict)
 read_stats = defaultdict(dict)
 read_metrics = ['total', 'trimmed-total', 'trimmed-pe', 'trimmed-orphans', 'merged', 'cluster_thres', 'clusters_total', 'clusters_min_cov', 'cluster_above_thres']
-read_counts_out = open("reads_stats.csv","w")
-outstring = "sample,"+",".join(read_metrics)
-read_counts_out.write(outstring+"\n")
-read_counts_out.close()
 #primer_clip_string = ""
 primer_versions = []
+bl_db_extensions = ["nin", "nsq", "nhr"]
+blast_dict = defaultdict(dict) #this will hold the results from parsing the BLAST output
+gi_to_taxid_dict = {}
+taxid_list = []
+tax_dict = {}
 
 parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool', prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
@@ -69,7 +71,7 @@ parser.add_argument("-v", "--verbose", help="turn verbose output on", action="st
 parser.add_argument("-s", "--seqinfo", help="write out seq_info.csv file", action="store_true")
 parser.add_argument("-f", "--fasta", help="write out ref.fasta file", action="store_true")
 parser.add_argument("-p", "--phyloplace", help="perform phylogenetic placement", action="store_true")
-parser.add_argument("-t", "--taxids", help="write out taxid.txt file", action="store_true")
+#parser.add_argument("-t", "--taxids", help="write out taxid.txt file", action="store_true")
 parser.add_argument("-b", "--blast", help="compile local blast db and blast queries", action="store_true")
 parser.add_argument("-m", "--marker", help="marker ID (default: marker)", metavar="<string>", action="store", default="marker")
 parser.add_argument("-n", "--n_threads", help="Number of threads (default: 1)", type=int, metavar="<INT>", action="store", default="1")
@@ -88,13 +90,15 @@ reference_group = parser.add_argument_group('Reference', 'The parameters in this
 reference_group.add_argument("-R", "--REFlist", help="file containing a list of files to be used as reference sequences", metavar="<FILE>", action="store")
 reference_group.add_argument("--gb_out", help="output the corrected gb file", metavar="<FILE>", action="store", default="")
 reference_group.add_argument("--rec_check", help="check records to be used as reference", action="store_true")
+reference_group.add_argument("--blast_db", help="path to precompiled blast database", metavar="<PATH>", action="store", default="")
+reference_group.add_argument("--gi_to_taxid", help="comma delimited file containing 'gi accession,taxid' for a list of taxa", metavar="<FILE>", action="store", default=os.getcwd()+"/gi_to_taxid.csv")
 cluster_group = parser.add_argument_group('Query clustering options', 'The parameters in this group affect read clustering')
 cluster_group.add_argument("--cluster", help="perform clustering of query sequences using vsearch", action="store_true")
 cluster_group.add_argument("--clust_match", help="identity threshold for clustering in percent (default: 1)", type=float, metavar="<FLOAT>", action="store", default="1")
 cluster_group.add_argument("--clust_cov", help="minimum number of records in cluster (default: 1)", type=int, metavar="<INT>", action="store", default="1")
 blast_group = parser.add_argument_group('BLAST search', 'The parameters in this group affect BLAST search and BLAST based taxonomic assignment')
 blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
-blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
+blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.80)", type=float, metavar="<FLOAT>", action="store", default="0.80")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
 phyloplace_group = parser.add_argument_group('Phylogenetic placement', 'The parameters in this group affect phylogenetic placement')
 phyloplace_group.add_argument("--refpkg", help="PATH to refpkg", metavar="<DIR>", action="store")
@@ -113,6 +117,320 @@ if len(sys.argv) < 2:	#if the script is called without any arguments display the
 
 
 ###FUNCITONS
+def rw_gi_to_taxid_dict(dictionary, name, mode):
+    '''
+    The function writes a dictionary to a file ('key,value')
+    or reads a comma separated file into a dictionary
+    '''
+ 
+    if mode == 'w':
+        fh = open(name, 'w')
+        for key in dictionary.keys():
+            fh.write("%s,%s\n" %(key, dictionary[key]))
+        fh.close()
+	print " ..done writing!\n"
+    
+    
+    elif mode == 'r':
+        fh = open(name, 'r')
+        for line in [l.strip() for l in fh]:
+            key,value = line.split(',')
+            dictionary[key] = value
+        fh.close()
+	print " ..done parsing!\n"
+        
+    else:
+        sys.exit("only 'r' or 'w' are allowed for mode in the rw_gi_to_taxid_dict")
+        
+
+
+def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts):
+    "This function filters the centroid fasta file produced by vsearch"
+    "and removes all centroid sequences that represent clusters of size"
+    "below the specified threshold"
+    os.rename(centroid_fasta, centroid_fasta+"_backup")
+    f=open(centroid_fasta,"w")
+    seqs=list(SeqIO.parse(centroid_fasta+"_backup",'fasta'))
+    for record in seqs:
+#        print record.id
+#        print cluster_counts[record.id]
+        if int(cluster_counts[record.id]) >= m_cluster_size:
+            outstring=">%s\n%s\n" % (record.id, record.seq)
+            f.write(outstring)
+        else:
+            del cluster_counts[record.id]
+    f.close()
+
+    good_read_count = 0
+    for ID in cluster_counts.keys():        #count the number of reads in the retained clusters
+        good_read_count+=cluster_counts[ID]
+#    print good_read_count   
+    return good_read_count
+
+
+
+def parse_vsearch_uc(fil, cluster_counts, cluster_reads, extract_reads=1):
+    "The function parses the 'uc' file from vsearch"
+    f=open(fil,"r")
+    for line in [l.strip() for l in f]: #loop through the file one line at a time, stripping off any newline characters
+        if line.startswith("C"): #process only lines that start with a "C"
+            elem = line.split("\t") #split the lines at tab
+            cluster_counts[elem[8]] = int(elem[2]) #write the counts to dictionary with key being the id of the centroid read
+        
+        if extract_reads:
+            if line.startswith('S'):
+                elem = line.split("\t")
+                if not cluster_reads.has_key(elem[8]):
+                    cluster_reads[elem[8]] = [elem[8]] #create a new key for the centroid id and add the centroid id as the first element into the list
+                    
+            if line.startswith('H'):
+                elem = line.split("\t")
+                if cluster_reads.has_key(elem[9]):
+                    cluster_reads[elem[9]].append(elem[8]) #add the new read id to the centroid cluster
+                else:
+                    cluster_reads[elem[9]] = [elem[9]] #create a new key for the centroid id and add the centroid id as the first element into the list
+                    cluster_reads[elem[9]].append(elem[8]) #add the new read id to the centroid cluster
+    f.close()
+
+
+def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
+    "The function takes a dictionary of queries and their hits"
+    "and provides taxonomic assignment based on the LCA method."
+    tax_count = defaultdict(dict)
+
+#    print len(b_filtered['hit'])
+    if b_filtered.has_key('hit'):
+	    for query in b_filtered['hit'].keys():
+	        if len(b_filtered['hit'][query]) == 1:
+	            if v:
+		            print "\ndirect assignment for %s -> %s" %(query, b_filtered['hit'][query][0])
+
+	            if not tax_count['species'].has_key(b_filtered['hit'][query][0]):
+	                tax_count['species'][b_filtered['hit'][query][0]] = []
+	            tax_count['species'][b_filtered['hit'][query][0]].append(query)
+	            del b_filtered['hit'][query]
+	        else:
+		    if v:
+		            print "\nattempting LCA assignment for %s" %query
+	            for index in reversed(range(len(tax_dict["tax_id"]))):
+	                id_list = []
+			if tax_dict["tax_id"][index] == 'below_superkingdom': #if this level is reached (that means it cannot be assigned to a kingdom) in the taxonomy then we have tested all possible levels and have not found any convergencce
+			    if v:
+				    print "was unable to assign LCA to %s" %query
+			    if not tax_count.has_key('nohit'):
+	            		tax_count['nohit'] = {'nohit':[]}
+	        	    tax_count['nohit']['nohit'].append(query)
+			    break
+#	                print index
+#	                print "\nLEVEL: %s" %tax_dict["tax_id"][index]
+	                for tax in b_filtered['hit'][query]:
+#	                    print tax_dict[tax][index]
+	                    id_list.append(tax_dict[tax][index])
+	                    if not tax_dict[tax][index]:
+#	                        print "nothing found at this level for %s" %tax
+	                        break
+	                if len(id_list) == len(b_filtered['hit'][query]):
+#	                        print "ok - all have valid taxid"
+
+	                        if len(set(id_list)) == 1:
+				    if v:
+		                            print "found LCA %s at level %s" %(id_list[0], tax_dict["tax_id"][index])
+#	                            print tax_dict[id_list[0]][1]
+#	                            print tax_dict[id_list[0]][2]
+	                            if not tax_count[tax_dict["tax_id"][index]].has_key(id_list[0]):
+	                                tax_count[tax_dict["tax_id"][index]][id_list[0]] = []
+ 	                            tax_count[tax_dict["tax_id"][index]][id_list[0]].append(query)
+	                            del b_filtered['hit'][query]
+	                            break
+#	                        else:
+#	                            print "not yet LCA"
+                            
+#	        print "\nUPDATE:\n%s" %tax_count
+    	    if len(b_filtered['hit']) == 0:
+	        print "all queries have been successfully assigned to a taxonomy"
+	    else:
+	        print "%i queries failed:\n%s" %(len(b_filtered['hit']), b_filtered['hit'])
+
+    if b_filtered.has_key('nohit'):
+        if not tax_count.has_key('nohit'):
+            tax_count['nohit'] = {'nohit':[]}
+        tax_count['nohit']['nohit'].extend(b_filtered['nohit'])
+    
+        
+    return tax_count
+
+
+
+def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
+    "The function takes a list of taxonomic ids, runs the taxtable program from the taxit suite"
+    "to summarize the taxonomic information for the taxids and formats the result into a dictionary"
+
+    print "write out taxids to taxids.txt\n"
+    f = open("taxids.txt","w")
+    for tid in tids:
+        f.write(tid + "\n")
+    f.close()
+
+    cmd = "taxit taxtable -d %s -t taxids.txt -o taxa.csv" %taxonomy_db
+    print "running taxit to generate reduced taxonomy table"
+    if len(denovo_taxa) > 0:
+        print "WARNING: any taxa without valid taxid will not be included -  NEEDS TO BE FIXED IF PHYLOGENETIC PLACEMENT IS PLANNED"
+    print "\n"+cmd
+    taxtable,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+
+    taxtable = open("taxa.csv","r")
+    for line in taxtable:
+        line = re.sub('"','',line.strip())
+        array = line.split(',')
+
+#	while array[-1] != 'species': #this should get rid of any 'subspecies' or 'varietas' levels
+#	    array.pop(-1)
+		
+        if len(array) > 1:
+            key = array.pop(0)
+#            if array[-1] == 'subspecies':
+#                array.pop(-1)
+            out_tax_dict[key]=array
+            
+            #add denovo taxa dummies to tax_dict
+            if denovo_taxa.has_key(key):
+                for deno in denovo_taxa[key]:
+                    local = array[:]
+                    local[0] = key
+                    local[1] = 'species'
+                    local[2] = deno
+                    local[-1] = reference_taxa[deno]
+                    tax_dict[reference_taxa[deno]] = local
+
+	while tax_dict['tax_id'][-1] != 'species': #this should get rid of any 'subspecies' or 'varietas' levels
+            tax_dict['tax_id'].pop(-1)
+
+
+
+def check_for_taxonomy_db(tax_db):
+    "The function checks if the taxonomy.db is present"
+    if not tax_db or not os.path.isfile(tax_db): #if no path to the taxonomy database is specifed or the path is not correct
+                if os.path.isfile(os.path.dirname(sys.argv[0])+'/taxonomy.db'): #check if taxonomy.db is present in the same path as the metabeat.py script
+                        tax_db = "%s/taxonomy.db" %os.path.dirname(sys.argv[0])
+			print "taxonomy.db found at %s" %tax_db
+                else:
+                        print "\nmetaBEAT.py requires a taxonomy database. Please configure it using taxtastic. Per default metaBEAT expects a file 'taxonomy.db' in the same directory that contains the metaBEAT.py script. If you are not happy with that please change the variable 'taxonomy_db' at the top of this script to the correct path to your taxonomy.db file.\n"
+                        sys.exit()
+    else:
+        print "taxonomy.db is present at: %s" %tax_db
+
+    return tax_db
+
+def gi_to_taxid(b_filtered, all_taxids, processed, v=0):
+    "This function takes the resulting dictionary from the blast_filter function"
+    "and fetches the corresponding taxonomic ids to the gi accessions if necessary"
+    "(i.e. if the format is specified as 'gi')."
+    "It returns a list of unique taxonomic ids."
+    done = 0
+    if b_filtered['format'] == 'gi':
+        for query in b_filtered['hit'].keys():
+            if v:
+                print "processing query: %s" %query
+            taxids=[]
+            for hit in b_filtered['hit'][query]:
+#                print "gi: %s" %hit
+                if processed.has_key(hit):
+                    taxid = processed[hit]
+                    done += 1
+                    if v:
+                        print "have seen gi %s (%i) before" %(hit, done)
+                else:
+                    
+		    done = False
+	            while not done:
+			try:
+				handle = Entrez.efetch(db="nucleotide", id=hit, rettype="fasta", retmode="xml")
+				done = True
+			except:
+				print "connection closed - retrying entrez for query '%s'.." %hit
+
+                    taxon = Entrez.read(handle)
+                    taxid = taxon[0]['TSeq_taxid']
+                    processed[hit] = taxon[0]['TSeq_taxid']
+                    time.sleep(0.25)
+                    done += 1
+                    if v:
+                        print "fetched taxid for gi: %s (%i) using Entrez" %(hit, done)
+                        
+#                print "taxid: %s" %taxid                
+                taxids.append(taxid)
+                if not v:
+                    if done%100 == 0:
+                        print ".", #the comma at the end ommits the newline when printing
+                
+#            print b_filtered['hit'][query]
+            b_filtered['hit'][query] = list(set(taxids))
+#            print len(taxids)
+            all_taxids.extend(taxids)
+#            print len(all_taxids)
+            
+        if v:
+            print "\nfetched taxids for %i gis" %done
+        
+    elif b_filtered['format'] == 'taxid':
+        for query in b_filtered['hit'].keys():
+            all_taxids.extend(b_filtered['hit'][query])
+
+#    print all_taxids
+#    print "make to set"
+    all_taxids = list(set(all_taxids))
+    return all_taxids
+
+
+def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
+    "The function interprets a BLAST results handle and filters results subsequent taxonomic assignment using LCA"
+    result = {'format':''}
+    count=0
+    for res in b_result:
+        count += 1
+        if v:
+            print "\nquery: %s" % res.query #the current query
+        if not res.alignments:  #if no alignment was found for the query
+            if v:
+                print "no hit - done"
+	    if not result.has_key('nohit'):
+		result['nohit'] = []
+            result['nohit'].append(res.query)
+            
+        elif (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) < m_ident) or res.alignments[0].hsps[0].bits < m_bitscore:
+            if v:
+                print "no significant hit - done"
+	    if not result.has_key('nohit'):
+		result['nohit'] = []
+            result['nohit'].append(res.query)
+            
+        else: #if a hit has been found
+	    if not result.has_key('hit'):
+		result['hit'] = {}
+            
+            max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
+            result['hit'][res.query]=[] #create empty list for query
+            for alignment in res.alignments: #for each hit of the current query
+#                print alignment.hsps[0].bits
+                if not result['format']: #determining the format of the blast database (only once per blast file)
+                    if alignment.title.startswith('gi'):
+                        result['format']='gi'
+                    else:
+                        result['format']='taxid'
+                        
+                if alignment.hsps[0].bits > (max_bit_score*0.9): #if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
+#                    print alignment.title.split("|")[1]
+                    result['hit'][res.query].append(alignment.title.split("|")[1])
+                    if v:
+                        print "%s\t%s" %(alignment.hsps[0].bits, alignment.title)
+                else:
+#                    print result['hit'][res.query]
+                    break
+#            print "%s: %s" %(res.query, result['hit'][res.query])
+
+    print "%i queries processed" %count
+    return result
+
 def file_check(file_to_test, optional_message=None):
 	"tests if a file exists"
 	file_to_test = os.path.abspath(file_to_test)
@@ -152,6 +470,9 @@ def write_out_refs_to_fasta(ref_seqs, ref_taxids = {}):
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
 
+if args.blast or args.phyloplace:
+	taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
+
 if args.phyloplace:
 	if not args.refpkg:
 		print "\nTo perform phylogenetic placement with pplacer metaBEAT currently expects a reference package to be specified via the --refpkg flag\n"
@@ -167,7 +488,25 @@ if args.phyloplace:
 	args.refpkg = os.path.abspath(args.refpkg) 
 
 
-if args.REFlist:
+if args.REFlist and args.blast_db:
+	print "\nPlease provide either a set of custom reference sequences OR a precompiled BLAST database\n"
+	sys.exit()
+elif args.blast_db:
+	for f in glob.glob(args.blast_db+"*"):
+		if not bl_db_extensions:
+			args.blast_db = os.path.abspath(args.blast_db)
+			print "ok - seems the precompiled BLAST database contains all necessary files\n"
+			break
+		for i in range(len(bl_db_extensions)):
+			if f.endswith(bl_db_extensions[i]):
+				del bl_db_extensions[i]
+				break
+
+	if bl_db_extensions:	#if I get to this point and there is a BLAST database extension that has not yet encountert then there is no file with this extension
+		print "precompiled BLAST database is not intact\n"
+		sys.exit()
+
+elif args.REFlist:
 	file_check(file_to_test=args.REFlist, optional_message="\nprovided reference file is not a valid file")
 	
 	refdata_files = [line.strip() for line in open(args.REFlist)]
@@ -315,6 +654,12 @@ if args.querylist:
 #print len(queries)
 #print len(files_to_barcodes[files_to_barcodes.keys()[0]])
 #print files_to_barcodes
+
+#check if gi_to_taxid dictonary is there and read if yes
+#print "looking for gi_to_taxid file at %s" %args.gi_to_taxid
+if os.path.isfile(args.gi_to_taxid):
+	print "\nfound gi_to_taxid file at %s" %args.gi_to_taxid,
+	rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='r')
 	
 
 #print references
@@ -358,16 +703,37 @@ for reffile, refformat in references.items():
 						break
 
 			if not taxid or args.rec_check:
-				handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0])	#search the taxonomy database for the taxon by organism name
+				done = False
+       	                    	while not done:
+                        		try:
+						handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0])	#search the taxonomy database for the taxon by organism name
+                                		done = True
+                        		except:
+                                		print "connection closed - retrying entrez for query '%s'.." %seqs[i].features[0].qualifiers['organism'][0]
+
 				taxon = Entrez.read(handle)
 				if not taxon["IdList"]:	#if the search term has not yielded any result
 					print "\nWARNING: \"%s\" in record '%s' was not recognized as a valid taxon name on Genbank." % (seqs[i].features[0].qualifiers['organism'][0], seqs[i].name)
 					print "I'll try if just \"%s\" is valid" %seqs[i].features[0].qualifiers['organism'][0].split(" ")[0]
-					handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0].split(" ")[0])
+					done = False
+		                        while not done:
+		                        	try:
+							handle = Entrez.esearch(db="Taxonomy", term=seqs[i].features[0].qualifiers['organism'][0].split(" ")[0])
+                                			done = True
+                        			except:
+                                			print "connection closed - retrying entrez for query '%s'.." %seqs[i].features[0].qualifiers['organism'][0].split(" ")[0]
+
 					taxon = Entrez.read(handle)
 					if taxon['IdList']: #if the search with just the first term of the taxon name yielded a result
 						tax_rank = ''
-						handle = Entrez.efetch(db="Taxonomy", id=taxon['IdList'][0]) #fetch the taxonomy to this taxid
+						done = False
+			                        while not done:
+				                        try:
+								handle = Entrez.efetch(db="Taxonomy", id=taxon['IdList'][0]) #fetch the taxonomy to this taxid
+				                                done = True
+				                        except:
+                                				print "connection closed - retrying entrez for query '%s'.." %taxon['IdList'][0]
+
 						recs = Entrez.read(handle)
 						tax_rank = recs[0]["Rank"]
 						print "ok - found it with taxid \"%s\" at taxonomic rank \"%s\"" %(taxon['IdList'][0],tax_rank)
@@ -437,72 +803,6 @@ for reffile, refformat in references.items():
 
 print "\ntotal number of valid records: %i\n" % len(all_seqs)
 
-
-if args.taxids:
-	if not taxonomy_db or not os.path.isfile(taxonomy_db): #if no path to the taxonomy database is specifed or the path is not correct
-		if os.path.isfile(os.path.dirname(sys.argv[0])+'/taxonomy.db'): #check if taxonomy.db is present in the same path as the metabeat.py script
-			taxonomy_db = "%s/taxonomy.db" %os.path.dirname(sys.argv[0])
-		else:
-			print "\nmetaBEAT.py requires a taxonomy database. Please configure it using taxtastic. Per default metaBEAT expects a file 'taxonomy.db' in the same directory that contains the metaBEAT.py script. If you are not happy with that please change the variable 'taxonomy_db' at the top of this script to the correct path to your taxonomy.db file.\n"
-			sys.exit() 
-
-	print "write out taxids to taxids.txt\n"
-	f = open("taxids.txt","w")
-	for key in taxids.keys():
-#		print key
-		f.write(key + "\n")
-	f.close()
-	cmd = "taxit taxtable -d %s -t taxids.txt -o taxa.csv" %taxonomy_db# -o taxa.csv"
-#	cmd = "taxit taxtable -d %s -t taxids.txt" %taxonomy_db# -o taxa.csv"
-	print "running taxit to generate reduced taxonomy table"
-	if len(denovo_taxa) > 0:
-		print "WARNING: any taxa without valid taxid will not be included -  NEEDS TO BE FIXED IF PHYLOGENETIC PLACEMENT IS PLANNED"
-	print "\n"+cmd
-
-#	handle = subprocess.call(taxtable, shell=True)
-	taxtable,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-
-	tax_dict = {}
-	taxtable = open("taxa.csv","r")
-	for line in taxtable:
-#	for line in taxtable.split("\n"):
-#		print line
-		line = re.sub('"','',line.strip())
-#		print line
-		array = line.split(',')
-		if len(array) > 1:
-#			print len(array)
-#			print array
-			key = array.pop(0)
-#			print key
-#			print array
-			if array[-1] == 'subspecies':
-				array.pop(-1)
-#			print array
-#			print "key: %s - %s" % (key, array[-1])
-#			print len(array)
-			tax_dict[key]=array
-#			print "\nregular:"
-#			print "%s: %s" %(key, tax_dict[key])
-			if denovo_taxa.has_key(key):
-#				print "parent array: %s: %s" %(key, tax_dict[key])
-#				print "there were %s entries for this" %len(denovo_taxa[key])
-				for deno in denovo_taxa[key]:
-#					print "denovo species: %s" %deno
-					local = []
-					local = array[:]
-					local[0] = key
-					local[1] = 'species'
-					local[2] = deno
-					local[-1] = reference_taxa[deno]
-					tax_dict[reference_taxa[deno]] = local
-#					print "new: %s: %s" %(reference_taxa[deno], tax_dict[reference_taxa[deno]])
-#					print local	
-#					print "original: %s: %s" %(key, tax_dict[key])
-
-#	for key,value in tax_dict.items():
-#		print "%s: %s" % (key, value)
-
 if args.seqinfo:
 	print "write out seq_info.csv\n"
 	f = open("seq_info.csv","w")
@@ -515,19 +815,31 @@ if args.fasta:	#this bit writes out the sequences that will become the reference
 	write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
 
 if args.blast:
-	print "\n### BUILDING BLAST DATABASE ###\n"
-	if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
-		write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
-#	print "building blast db for marker %s\n" % args.marker
-	makeblastdb="makeblastdb -in refs.fasta -dbtype nucl -out %s_blast_db" % args.marker
-	print makeblastdb
-	cmdlist = shlex.split(makeblastdb)
-	cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE)
-	stdout = cmd.communicate()[0]
-	if args.verbose:
-		print stdout
+	if args.REFlist:
+		print "\n### BUILDING BLAST DATABASE ###\n"
+		if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
+			write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
+#		print "building blast db for marker %s\n" % args.marker
+		makeblastdb="makeblastdb -in refs.fasta -dbtype nucl -out %s_blast_db" % args.marker
+		print makeblastdb
+		cmdlist = shlex.split(makeblastdb)
+		cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE)
+		stdout = cmd.communicate()[0]
+		if args.verbose:
+			print stdout
 	
-	blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
+		blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
+	elif args.blast_db:
+		print "\n### USING PRECOMPILED BLAST DATABASE (%s) ###\n" %args.blast_db
+		blast_db = args.blast_db
+
+
+#start read stats output
+read_counts_out = open("reads_stats.csv","w")
+outstring = "sample,"+",".join(read_metrics)
+read_counts_out.write(outstring+"\n")
+read_counts_out.close()
+
 
 print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
@@ -618,7 +930,6 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 		print "\n##### processing query ID: %s #####\n" % (queryID)
 		species_count = defaultdict(list)
 		taxonomy_count = defaultdict(dict)
-		nohit_count = defaultdict(list)
 		if not os.path.exists(queryID):
 			os.makedirs(queryID)
 		
@@ -864,22 +1175,10 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 	
 			#read in the results from the clustering, i.e. number of reads per cluster, later I could read in the actual read ids to allow for retrievel of reads assigned to a given taxon
 #			all_clust_count = int(0)
-			f=open(queryID+".uc","r") #read the file
-			for line in [l.strip() for l in f]: #loop through the file one line at a time, stripping off any newline characters
-				if line.startswith("C"): #process only lines that start with a "C"
-#					all_clust_count+=1
-					elem = line.split("\t")	#split the lines at tab
-#					if int(elem[2]) >= args.clust_cov:
-					cluster_counts[elem[8]] = int(elem[2]) #write the counts to dictionary with key being the id of the centroid read
-				if args.extract_all_reads:
-					if line.startswith("H"):
-						elem = line.split("\t")
-						if cluster_reads.has_key(elem[9]):
-							cluster_reads[elem[9]].append(elem[8]) #add the new read id to the centroid cluster
-						else:
-							cluster_reads[elem[9]] = [elem[9]] #create a new key for the centroid id and add the centroid id as the first element into the list
-							cluster_reads[elem[9]].append(elem[8]) #add the new read id to the centroid cluster
-			f.close()
+			
+			print "\nparse vsearch uc file\n"
+			parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
+			
 			
 			for ID in unknown_seqs_dict.keys():
 				if cluster_counts.has_key(ID):
@@ -888,28 +1187,10 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			total_queries = querycount[queryID]
 			total_clusters = len(cluster_counts)
-			if args.clust_cov>1:
-				all_cluster_counts = cluster_counts
-				cluster_counts={}
-				os.rename(queryID+'_centroids.fasta', queryID+'_centroids_backup.fasta')
-				f=open(queryID+'_centroids.fasta',"w")
-				seqs=list(SeqIO.parse(queryID+'_centroids_backup.fasta','fasta'))
-				for record in seqs:
-					if int(unknown_seqs_dict[record.id].description.split("|")[-2]) >= args.clust_cov:
-						outstring=">%s\n%s\n" % (record.id, record.seq)
-						cluster_counts[record.id] = all_cluster_counts[record.id]
-						f.write(outstring)
-				
-#				print "total: %i" %querycount[queryID]
-#				print "total cluster count: %i" %len(all_cluster_counts)
-#				print "good cluster count: %i" %len(cluster_counts)
-				good_read_count=0
-				for ID in cluster_counts.keys():	#count the number of reads in the retained clusters
-					good_read_count+=cluster_counts[ID]
 
-#				print "good read count: %i" %good_read_count
-				querycount[queryID] = good_read_count
-				f.close()
+			if args.clust_cov>1:
+				print "\nreduce cluster files\n"
+				querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=10, cluster_counts=cluster_counts)
 			
 			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i sequences per cluster) are used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), args.clust_cov)
 		
@@ -928,13 +1209,13 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 
 		print "WRITING BASIC READ STATS TO FILE\n"
+		read_counts_out = open("../reads_stats.csv","a")
 		outstring = queryID
 		for m in read_metrics:
 			if read_stats[queryID].has_key(m):
 				outstring += ','+str(read_stats[queryID][m])
 			else:
 				outstring += ',NA'
-		read_counts_out = open("../reads_stats.csv","a")
 		read_counts_out.write(outstring+"\n")
 		read_counts_out.close()
 	
@@ -947,7 +1228,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 		some_hit = []	#This list will contain the ids of all queries that get a blast hit, i.e. even if it is non-signficant given the user specfied thresholds. For this set of reads we will attempt phylogenetic placement. No point of even trying if they dont get any blast hit.
 		for approach in methods:
-			if approach == 'pplacer':
+			if approach == 'pplacer' and len(cluster_counts) > 0:
 				query_count += 1
 				taxonomy_count = defaultdict(dict)
 				species_count = defaultdict(list) #this is actually not needed in the pplacer parsing, but I just need to empty it here in case it still contains stuff from the blast assignemtns, NEEDS TO BE CLEANED UP LATER
@@ -1008,7 +1289,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 #					print pp_queries['p'][0] #just consider the first placement
 					placement = pp_queries['p'][0][0] #take the first placement for now
 #					print "add taxid \'%s\' to global taxid dictionary" %placement
-					global_taxids_hit[placement] += 1 #add taxid of placement to global dictionary
+					global_taxids_hit.append(placement) #add taxid of placement to global list
 					
 					if tax_dict[placement][1] == 'subspecies':
 						rank = 'species'
@@ -1031,7 +1312,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 #				sys.exit()
 
 
-			elif approach == 'blast':
+			elif approach == 'blast' and len(cluster_counts) > 0:
 				query_count += 1
 				if not os.path.exists('BLAST_'+str(args.min_ident)):
 					os.makedirs('BLAST_'+str(args.min_ident))
@@ -1041,215 +1322,57 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				print "running blast search against local database %s" % blast_db
 #				print "QUERIES: %s" %queryfile
 
-				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, blast_out, args.n_threads) 
+				blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, blast_out, args.n_threads) 
 				print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
 
 
-				blast_cmd = "blastn -query %s -db %s -evalue 0.001 -out %s -num_threads %i" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
-				cmdlist = shlex.split(blast_cmd)
-				stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
+#				blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
+#				cmdlist = shlex.split(blast_cmd)
+#				stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
 
 
-				blast_handle = NcbiblastxCommandline(cmd='blastn', query=queryfile, db=blast_db, evalue=0.001, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
+				blast_handle = NcbiblastxCommandline(cmd='blastn', query=queryfile, db=blast_db, evalue=1e-20, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
 				stdout, stderr = blast_handle()
 
-
+				print '\n'+time.strftime("%c")+'\n'
 				print "\n### INTERPRETING BLAST RESULTS ###\n"
+#				if 
 				blast_result_handle = open(blast_out) #read in blast result (in xml format)
 
-				#parse blast xml file
+				print "\nparse blast xml file\n"
 				blast_results = NCBIXML.parse(blast_result_handle) #parse blast xml file
-		
-				processed=[]
-				for res in blast_results: #loop through the blast result query after query
-#					print res.ka_params
-#					print dir(res)
-					if args.verbose:
-						print "\nquery: %s" % res.query #the current query
-					if not res.alignments:	#if no alignment was found for the query
-						if args.verbose:
-							print "no hit - done"
-						processed.append(res.query)
-						nohit_count['no_hit'].append(res.query) #append the query id to the dictionary that contains all the nohit reads
-					elif (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) < args.min_ident) or res.alignments[0].hsps[0].bits < 80:
-						some_hit.append(res.query)	#record the query id even if its not a significant blast hit. These sequences will be included for phylogenetic placement 
-						if args.verbose:
-							print "no significant hit - done"
-						processed.append(res.query)
-						nohit_count['no_hit'].append(res.query) #append the query id to the dictionary that contains all the nohit reads
-						
-					else: #if a hit has been found
-						some_hit.append(res.query)
-						max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
-#						print max_bit_score
-#						print "%f" % (max_bit_score*0.9)
-						hit_taxids = defaultdict(int)	#define dictionaries
-						perfect_hit_taxids = defaultdict(int)
-						ambig_hits_taxids = defaultdict(int)
-		
-						for alignment in res.alignments: #for each hit of the current query
-							for hsp in alignment.hsps:	#for each alignment the parser creates a list through which we loop here
-								perc_ident = 100*hsp.identities/float(res.query_letters)	#calculate percent identity
-								if (res.alignments[0].hsps[0].identities == len(res.alignments[0].hsps[0].query) and (res.query_letters==hsp.identities)):	#if the query length is equal to the number of hit bases, we have a perfect match
-#									perfect_hit_taxids[alignment.title.split(" ")[1]] += 1	#count the number of perfect hits to a given taxon, the name (which is the taxid of the taxon, because I have build the database using taxids as sequence headers) is recorded in the alignment.title after the first space
-									perfect_hit_taxids[alignment.title.split(" ")[1].split("|")[1]] += 1
-#									print "perfect hit recorded "
-								if hsp.bits > (max_bit_score*0.9): # and (float(hsp.identities)/len(hsp.query)*100) > 95:	#if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
-#									hit_taxids[alignment.title.split(" ")[1]] += 1	#count the number of top90 hits to a given taxon
-									hit_taxids[alignment.title.split(" ")[1].split("|")[1]] += 1	#count the number of top90 hits to a given taxon
-#									print "top 90 hit recorded"
-#								else:
-#									print "not recorded because a hit of %f is below the threshold of %f" % (hsp.bits, max_bit_score*0.9)
-					
-						if len(perfect_hit_taxids)==1:	#if the perfect hit dictionary contains only one key, that means that only one taxon has been hit perfectly
-							if args.verbose:
-								print "1 perfect match - done:\n%s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
-		
-#							print perfect_hit_taxids.keys()[0]
-							global_taxids_hit[perfect_hit_taxids.keys()[0]] += 1
-							processed.append(res.query)
-#							print "query %s (cluster countains %i sequences) assigned to %s (%s; %s)" % (res.query, cluster_counts[res.query], perfect_hit_taxids.keys()[0], tax_dict[perfect_hit_taxids.keys()[0]][2], tax_dict[perfect_hit_taxids.keys()[0]][1])
-#							print "this should be species: %s" % tax_dict[perfect_hit_taxids.keys()[0]][2]
-							species_count[tax_dict[perfect_hit_taxids.keys()[0]][2]].append(res.query) #add the perfect hit, which is bound to be a species to a dictionary. The key is the species name (which is fetched from the tax_dict dictionary based on the taxid) and the id of the query that had a perfect hit will be added to a list in the value of the dictionary
-						else:	#if the perfect hit dictionary contains zero or more than one keys, i.e. more than one species in the database had perfect hits
-#							print "reached ambiguous hits"
-							if len(perfect_hit_taxids)>1:	#if more than one taxids had perfect hits
-#								print "%i perfect matches" % len(perfect_hit_taxids)
-#								print perfect_hit_taxids
-								ambig_hits_taxids.update(perfect_hit_taxids)	#make the list of perfectly hitting taxids the current list to be fed into the LCA part below
-							else:	#if no perfect hit had been found
-#								print "no perfect matches"
-#								print hit_taxids
-								if len(hit_taxids)==1:	#if only one top 90% hit has been found
-									if args.verbose:
-										print "1 top90 match - done:\n%s" % tax_dict[hit_taxids.keys()[0]][2]
-		
-#									print hit_taxids.keys()[0]
-									global_taxids_hit[hit_taxids.keys()[0]] += 1
-									processed.append(res.query)
-#									print "query %s (cluster contains %i sequences) assigned to %s (%s; %s)" % (res.query, cluster_counts[res.query], hit_taxids.keys()[0], tax_dict[hit_taxids.keys()[0]][2], tax_dict[hit_taxids.keys()[0]][1])
-#									print "this should be species: %s" % tax_dict[hit_taxids.keys()[0]][2]
-									species_count[tax_dict[hit_taxids.keys()[0]][2]].append(res.query) #add the one top90 hit to a dictionary. The key is the species name (which is fetched from the tax_dict dictionary based on the taxid) and the id of the query that had a perfect hit will be added to a list in the value of the dictionary
-								else:	#if more than one top90 hits were found
-#									print "%i top90 matching species" % len(hit_taxids)
-									ambig_hits_taxids.update(hit_taxids)	#make this the list of taxids to be fed to the LCA part below
 
-							if args.verbose:
-								print "number of amgibuous hits: %i" % len(ambig_hits_taxids)
-							if len(ambig_hits_taxids)>0: #if the list contains more than one taxids, we attempt to identify the Lowest common ancestor
-#								print "identifying LCA"
-								tax_list = []	#defining variables
-								parent_count = defaultdict(int)
-								counter=1
-								no_species_hit = defaultdict(int)
-							
-								for counter in range(len(tax_dict["tax_id"])):
-#								while counter <= len(tax_dict["tax_id"]): #loop through the taxonomic levels encountert (see tax_dict has been generated with taxtastic above). The key "tax_id" contains a list of taxonomic ranks
-									counter += 1
-#									print counter
-									index=counter*-1
-#									print "current index: %i" % index
-									for hit,count in ambig_hits_taxids.items(): #generate a list of taxids that have been hit and were retained by the above criteria
-#										print "%s: %s" % (tax_dict[hit][2], count)
-										tax_list.extend([hit])
-			
-#									print "list of taxids to be included in LCA analysis:\n%s" % tax_list
+				print "get top 10% hits from blast output .. ",
+				res_dict = {}
+				res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit)
 
-									taxok=int(0)
-									for tax in tax_list: #for every taxid in the list
-#										print "taxon: %s; taxid at level %i(%i): %s" % ( tax, counter, index, tax_dict[tax][index])
-										if tax_dict[tax][index]: 
-										#we access the tax_dict dictionary using the taxid as the key, the value is a list, which contains taxids 
-										#for the parents of the current taxid. The last element in the list is a taxid at species level, the next to last
-										#contains a taxid for the corresponding genus level, the next to that the taxid for family and so on
-										#as you go to higher taxonomic levels some levels will be empty because in one lineage there is subfamily rank
-										#and in the other this field is just empty.
-										#Here I just check if there is valid taxids at the current taxonomic level (via the index which reads through the list backwards
-										#for each of the taxids in the list
-											taxok += 1
-											parent_count[tax_dict[tax][index]] += 1
-#										else:
-#											print "empty"
-		
-#									print "number of valid unique taxids: %i" % len(parent_count)
-									if taxok == len(tax_list):
-										if len(parent_count)==1:
-#											print "query %s was assigned to LCA %s (%s; %s)" % (res.query, parent_count.keys()[0], tax_dict[parent_count.keys()[0]][2], tax_dict[parent_count.keys()[0]][1])
-											if args.verbose:
-												print "assigned to LCA - done\n%s" % tax_dict[parent_count.keys()[0]][2]
-												
-#											print parent_count.keys()[0]
-											global_taxids_hit[parent_count.keys()[0]] += 1
-											processed.append(res.query)
-#
-											if not taxonomy_count.has_key(tax_dict[parent_count.keys()[0]][1]): #if the taxonomic rank has not been encountert before:
-#												print "taxonomic rank %s has not been encountert before" % tax_dict[parent_count.keys()[0]][1]
-#												print "ading new empty dictionary %s" % tax_dict[parent_count.keys()[0]][1]
-												
-												taxonomy_count[tax_dict[parent_count.keys()[0]][1]] = defaultdict(list) #empty dictionary
-												taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
-												
-#This worked for counts										taxonomy_count[tax_dict[parent_count.keys()[0]][1]] = defaultdict(int) #empty dictionary
-#This worked for counts										taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
+				if res_dict['format'] == 'gi':
+					print '\n'+time.strftime("%c")+'\n'
+					print "\nfetch taxids for gis\n"
+#					print "current length of taxid list: %i" %len(taxid_list)
+					taxid_list = gi_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gi_to_taxid_dict, v=args.verbose)
+#					print "current length of taxid list: %i" %len(taxid_list)
 
-#												print "level 1: %s" % taxonomy_count.keys()
-											#	for rank in taxonomy_count.keys():
-#													print "level 2 (key: %s): %s" % (rank, taxonomy_count[rank].keys())
-											#		for count in taxonomy_count[rank].keys():
-#														print "level 3 (key %s): %s" % (count, taxonomy_count[rank][count])
-											else:
-#												print "I have seen rank %s before" % ( tax_dict[parent_count.keys()[0]][1] )
-#												print "currently the rank %s contains the following keys: %s" % ( tax_dict[parent_count.keys()[0]][1], taxonomy_count[tax_dict[parent_count.keys()[0]][1]].keys())
-#												print "check if the rank %s already contains the key: %s" % (tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2] )
-												if not taxonomy_count[tax_dict[parent_count.keys()[0]][1]].has_key(tax_dict[parent_count.keys()[0]][2]):
-#													print "not found"
-#													print "adding new key %s to rank %s" % ( tax_dict[parent_count.keys()[0]][2], tax_dict[parent_count.keys()[0]][1])
-#This worked for counts											taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
-													taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
-												else:
-#													print "found"
-#													print "current count for rank %s, key %s is: %s" % ( tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2], taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] )
-#													print "add %i to count" % cluster_counts[res.query]
-#This worked for counts											taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] += cluster_counts[res.query]
-													taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]].append(res.query)
-#													print "afterwards count for rank %s, key %s is: %s" % ( tax_dict[parent_count.keys()[0]][1], tax_dict[parent_count.keys()[0]][2], taxonomy_count[tax_dict[parent_count.keys()[0]][1]][tax_dict[parent_count.keys()[0]][2]] )
-#												print taxonomy_count
+				if len(gi_to_taxid_dict) > 0:
+					print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
+					rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
 
-											break #if LCA is found break out of loop
-#										else:
-#											print "There was at least one invalid taxid encountert at this level"
-#									counter += 1
-#									print "no LCA found at level %i" % counter
-									tax_list = []
-									parent_count = defaultdict(int)
-									if counter == len(tax_dict["tax_id"]):
-										if args.verbose:
-											print "no LCA could be found for query: %s" % res.query
+				print "\ngenerate taxonomy dictionary\n"
+				tax_dict = {}
+				make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
 
-			print "number of queries/clusters processed: %i (of %i)" % ( len(processed), len(cluster_counts))
-			if len(processed)!=len(cluster_counts):	#final check
-				print "not all clusters were properly processed"
-				print "%i of %i" % (len(processed), len(cluster_counts))
+				print "\nassign taxonomy\n"
+				taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)
+				###PREVIOUS VERSION HAS collected all query ids that had a hit with the database (even if it was not significant) in a list 'some_hit' limited phylogenetic placement to only these queries
 
-#			print "species_count: %s" %species_count
-#			print "taxonomy_count['species']: %s" %taxonomy_count['species']
-			for species in species_count.keys():
-#				print species
-#				if not taxonomy_count.has_key('species'):
-#					taxonomy_count['species'] = []
-				if not taxonomy_count['species'].has_key(species):
-					taxonomy_count['species'][species] = []
-				taxonomy_count['species'][species].extend(species_count[species])
-#				print "taxonomy_count['species']: %s" %taxonomy_count['species']
-			taxonomy_count['nohit'] = nohit_count
-#			print "\nThe final dictionary"
-#			print taxonomy_count
-#			print
-#			tax_dict["tax_id"].append("species")
-			if nohit_count:
+			if len(cluster_counts) == 0: #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering
+				query_count += 1
+
+			if taxonomy_count.has_key('nohit'):
 				tax_dict["tax_id"].insert(0,'nohit')
 
 
+			print '\n'+time.strftime("%c")+'\n'
 			print "\n######## RESULT SUMMARY ########\n"
 			out=open(queryID+"-results.txt","w")
 			outstring="\nThe sample %s contained %i valid query sequences:\n" % (queryID, querycount[queryID])
@@ -1258,14 +1381,20 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 
 #			print tax_dict['tax_id']
+			if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
+				tax_dict['tax_id'] = ['nohit']
+
 			for tax_rank in reversed(tax_dict["tax_id"]):
-#				print "The current rank: %s" %tax_rank
+#				print "The current rank to be checked is: %s" %tax_rank
 				if taxonomy_count.has_key(tax_rank):
 #					print "The current rank: %s" %tax_rank
 #					print taxonomy_count[tax_rank]
 					total_per_rank_count=int(0)
 					output=[]
 					for hit in sorted(taxonomy_count[tax_rank].keys()):
+						if not tax_rank == 'nohit':
+							global_taxids_hit.append(hit)
+
 #						print hit
 #						print "\t%s: %i" % (hit, len(taxonomy_count[tax_rank][hit])) #This is the count of unique clusters that were assigned
 						current_count=int(0)
@@ -1281,7 +1410,8 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 								current_reads.extend(cluster_reads[read])
 
 							total_per_rank_count+=cluster_counts[read]
-						output.append("\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID]))
+						if not tax_rank == 'nohit':
+							output.append("\t%s: %i (%.2f %%)" % (tax_dict[hit][2], current_count, 100*float(current_count)/querycount[queryID]))
 #						print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
 
 						#### add data to global dictionary for biom table
@@ -1320,7 +1450,12 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 										current_reads.append(read)	#put the read ids back into the list sorted in descending order of the number reads in the respective clusters
 									
 
-							fas_out = open(hit.replace(" ", "_")+'.fasta',"w")
+							if hit == 'nohit':
+								fas_out = open('nohit.fasta',"w")
+							else:
+								fas_out = open(tax_dict[hit][2].replace(" ", "_")+'.fasta',"w")
+
+
 							for ID in current_reads:
 								backup = unknown_seqs_dict[ID].id
 								unknown_seqs_dict[ID].id = unknown_seqs_dict[ID].description
@@ -1343,8 +1478,9 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 							out.write(line+"\n")
 
 			out.close()
-			print "\n\n"	
-			os.chdir("../")	#leave directory of current analysis
+			print "\n\n"
+			if len(cluster_counts) > 0:
+				os.chdir("../")#leave directory of current analysis
 			if tax_dict["tax_id"][0] == 'nohit':
 				del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
 #			del tax_dict["tax_id"][-1] #remove the last element, i.e. 'species'
@@ -1368,6 +1504,8 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 		os.chdir('../')	#leave directory for query
 
+
+
 if args.blast or args.phyloplace:
 
 	print "\n##### DONE PROCESSING ALL SAMPLES #####"		
@@ -1381,15 +1519,15 @@ if args.blast or args.phyloplace:
 #			print global_taxa[tax_rank]
 			for out in sorted(global_taxa[tax_rank]):
 #				print "%s: %s" %(out, global_taxa[tax_rank][out])
-				observ_ids.append(out)
+				observ_ids.append(tax_dict[out][2])
 				data_to_biom.append(global_taxa[tax_rank][out])
 				clust_to_biom.append(global_clust[tax_rank][out])
 
 	#take care of nohits if any exist
 	if global_taxa.has_key('nohit'):
 		observ_ids.append('unassigned')
-		data_to_biom.append(global_taxa['nohit']['no_hit'])
-		clust_to_biom.append(global_clust['nohit']['no_hit'])
+		data_to_biom.append(global_taxa['nohit']['nohit'])
+		clust_to_biom.append(global_clust['nohit']['nohit'])
 
 	#print data_to_biom
 	data = np.asarray(data_to_biom)
@@ -1441,16 +1579,34 @@ if args.blast or args.phyloplace:
 	Taxonomy=defaultdict(dict)
 	syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
 	levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+	global_taxids_hit = list(set(global_taxids_hit))
 #	print "These taxids were identified:\n%s" %global_taxids_hit
-	for tid in global_taxids_hit.keys():
+	for tid in global_taxids_hit:
 		ind_taxonomy=[]
 #		print "fetch taxonomy for taxid: %s" %tid
+#		print "This is: %s" %tax_dict[tid][2]
 		#first check if there is a valid taxonomy available for the taxon on Genbank based on the taxon name (not using taxid because a dummy taxid such as 'denovo7' will yield a result because entrez will interpret this as taxid '7' which will yield a bacterium
-		handle = Entrez.esearch(db="Taxonomy", term=tax_dict[tid][2])      #search the taxonomy database for the taxon by organism name
+		done = False
+                while not done:
+	                try:
+				handle = Entrez.esearch(db="Taxonomy", term=tax_dict[tid][2])      #search the taxonomy database for the taxon by organism name
+	                        done = True
+                        except:
+	                        print "connection closed - retrying entrez for query '%s'.." %tax_dict[tid][2]
+
 		taxon = Entrez.read(handle)
 		if taxon["IdList"]:	#That this exists means there is a valid taxonomy for this taxon name
-			handle = Entrez.efetch(db="Taxonomy", id=tid)      #Now I can just fetch the taxonomy via the taxid
+#			print "OK found taxonomy:\n%s" %taxon
+			done = False
+                        while not done:
+	                        try:
+					handle = Entrez.efetch(db="Taxonomy", id=tid)      #Now I can just fetch the taxonomy via the taxid
+                	                done = True
+                                except:
+                        	        print "connection closed - retrying entrez for query '%s'.." %tid
+
 			taxon = Entrez.read(handle)
+#			print taxon
 			for lev in levels: #this will go through all valid taxonomic levels as defined in the list above
 #				print lev
 				for i in range(len(taxon[0]['LineageEx'])):	#loop through the taxonomy for the current taxon
@@ -1471,7 +1627,14 @@ if args.blast or args.phyloplace:
 
 		else:	#if there was no valid taxonomy found for the taxon name, this is interpreted as being denovo taxon, i.e. a taxon that has no Genbank taxid yet
 #			print "DENOVO TAXON"
-			handle = Entrez.efetch(db="Taxonomy", id=tax_dict[tid][0])      #search the taxonomy database for the taxon by taxid
+			done = False
+                        while not done:
+	                        try:
+					handle = Entrez.efetch(db="Taxonomy", id=tax_dict[tid][0])      #search the taxonomy database for the taxon by taxid
+                                        done = True
+                                except:
+                	                print "connection closed - retrying entrez for query '%s'.." %tax_dict[tid][0]
+
 			taxon = Entrez.read(handle)
 			for lev in levels:
 				for i in range(len(taxon[0]['LineageEx'])):
@@ -1530,7 +1693,7 @@ if args.blast or args.phyloplace:
 #	print len(observation_metadata)
 #	print "sample_metadata: %s" %sample_metadata
 #	print len(sample_metadata)
-#
+
 #	print "\n"
 
 	table = Table(data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Read count Table')
@@ -1554,4 +1717,8 @@ if args.blast or args.phyloplace:
 	out.write(clust_table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
 	out.close()
 print "\n##### DONE! #####\n"
+print '\n'+time.strftime("%c")+'\n'
+
 #print "remove read-pair id from extended reads. \n output overall run summary, i.e. per sample: raw reads, trimmed reads, merged reads, clusters, etc. \n make OTU table output standard"
+#
+#add functionality to iterate over parameters, e.g. cluster_coverage 10,20,30,40,50 and treat each as different sample in the biom file
