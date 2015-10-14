@@ -11,7 +11,7 @@ sudo apt-get install docker.io
 In a terminal window, mount the docker container to your current working directory and enter the self contained environment using a shell:
 
 ```bash
-sudo docker run -i -t -v $(pwd):/home/working chrishah/metabeat /bin/bash
+sudo docker run -i -t --net=host --name metaBEAT -v $(pwd):/home/working chrishah/metabeat /bin/bash
 ```
 
 Or access the container via a Jupyter notebook, by simply running the `start_metaBEAT_nb` providing the full path to your desired mounting point to the script, e.g.:

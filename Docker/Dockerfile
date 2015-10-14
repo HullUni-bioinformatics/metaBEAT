@@ -27,10 +27,11 @@ ADD external_software/fastx_clipper /usr/bin/
 ADD external_software/fastx_reverse_complement /usr/bin/
 ADD external_software/process_shortreads /usr/bin/
 
-RUN mkdir /home/working
 RUN mkdir /src
 ENV PATH /src:$PATH
+RUN mkdir /home/working
 
+#create taxonomy database
 RUN taxit new_database -d /src/taxonomy.db
 RUN rm /src/taxdmp.zip
 RUN mv /src/taxonomy.db /usr/bin/

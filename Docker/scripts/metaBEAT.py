@@ -1190,7 +1190,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			if args.clust_cov>1:
 				print "\nreduce cluster files\n"
-				querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=10, cluster_counts=cluster_counts)
+				querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts)
 			
 			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i sequences per cluster) are used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), args.clust_cov)
 		

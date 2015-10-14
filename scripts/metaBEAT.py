@@ -576,7 +576,7 @@ if args.querylist:
 			sys.exit(0)
 		args.PCR_primer = os.path.abspath(args.PCR_primer)
 		#check for IUPAC and expand if necessary
-		IUPAC = {'R': ['A','C'], 'W': ['A','T'], 'M': ['A','C'], 'S': ['C','G'], 'Y': ['C','T'], 'K': ['G','T']}
+		IUPAC = {'R': ['A','G'], 'W': ['A','T'], 'M': ['A','C'], 'S': ['C','G'], 'Y': ['C','T'], 'K': ['G','T']}
 		t_seqs = list(SeqIO.parse(open(args.PCR_primer,'r'),'fasta'))
 		for r in t_seqs:
 			pos = []
@@ -640,6 +640,9 @@ if args.querylist:
 		for line in fh:
 			line = line.strip()
 			cols = line.split(",")
+			if not len(cols) == len(headers):
+				print "sample %s in metadata file has an invalid number of columns - should have %i / has %i\n" %(cols[0], len(headers), len(cols))
+				sys.exit()
 			for i in range(1,len(cols)):
 #				print cols[i]
 				metadata[cols[0]][headers[i]] = cols[i]
@@ -1112,8 +1115,8 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			fin=open("temp_trimmed.fasta","r")
 			f_out=open(queryID+'_trimmed.fasta',"w")
-			for line in fin:
-				f_out.write(line.replace(" ","_"))
+#			for line in fin:
+#				f_out.write(line.replace(" ","_"))
 				
 			fin.close()
 			f_out.close()
@@ -1190,7 +1193,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			if args.clust_cov>1:
 				print "\nreduce cluster files\n"
-				querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=10, cluster_counts=cluster_counts)
+				querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts)
 			
 			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i sequences per cluster) are used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), args.clust_cov)
 		
@@ -1481,8 +1484,8 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 			print "\n\n"
 			if len(cluster_counts) > 0:
 				os.chdir("../")#leave directory of current analysis
-			if tax_dict["tax_id"][0] == 'nohit':
-				del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
+				if tax_dict["tax_id"][0] == 'nohit':
+					del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
 #			del tax_dict["tax_id"][-1] #remove the last element, i.e. 'species'
 		
 			print '\n'+time.strftime("%c")+'\n'
