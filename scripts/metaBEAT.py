@@ -42,7 +42,7 @@ queries = defaultdict(dict)
 seq_info = ['"seqname","accession","tax_id","species_name","is_type"']
 records = {}
 reference_taxa = {}
-taxids = defaultdict(int)
+#taxids = defaultdict(int)
 denovo_taxa = {}
 date = time.strftime("%d-%b-%Y").upper()
 denovo_count = 1
@@ -420,7 +420,11 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
                         
                 if alignment.hsps[0].bits > (max_bit_score*0.9): #if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
 #                    print alignment.title.split("|")[1]
-                    result['hit'][res.query].append(alignment.title.split("|")[1])
+		    if result['format'] == 'gi':
+                        result['hit'][res.query].append(alignment.title.split("|")[1])
+		    elif result['format'] == 'taxid':
+                        result['hit'][res.query].append(alignment.title.split("|")[-2])
+			
                     if v:
                         print "%s\t%s" %(alignment.hsps[0].bits, alignment.title)
                 else:
@@ -741,7 +745,7 @@ for reffile, refformat in references.items():
 						tax_rank = recs[0]["Rank"]
 						print "ok - found it with taxid \"%s\" at taxonomic rank \"%s\"" %(taxon['IdList'][0],tax_rank)
 						print "I am interpreting \"%s\" as a valid species name and will assign a dummy taxid to it" %seqs[i].features[0].qualifiers['organism'][0]
-						taxids[taxon['IdList'][0]]+= 1
+#						taxids[taxon['IdList'][0]]+= 1
 						if denovo_taxa.has_key(taxon['IdList'][0]):
 							denovo_taxa[taxon['IdList'][0]].append(seqs[i].features[0].qualifiers['organism'][0])
 						else:
@@ -763,13 +767,13 @@ for reffile, refformat in references.items():
 								seqs[i].features[0].qualifiers['db_xref'][j] = "taxon:" + taxid	#update the db_rxref qualifier with the correct taxid
 					else:
 						seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + taxid]
-					taxids[taxid] += 1
+#					taxids[taxid] += 1
 #					print "adding %s with taxid: %s to the dictionary" %(seqs[i].features[0].qualifiers['organism'][0], taxid)
 					reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
 			else:
 				seqs[i].id = seqs[i].name
 				reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
-				taxids[taxid] += 1
+#				taxids[taxid] += 1
 				
 		else:
 			seqs[i].id = seqs[i].name
@@ -819,6 +823,10 @@ if args.fasta:	#this bit writes out the sequences that will become the reference
 
 if args.blast:
 	if args.REFlist:
+		print "\nestablishing taxonomy for reference sequences\n"
+		taxid_list = reference_taxa.values()
+		make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+
 		print "\n### BUILDING BLAST DATABASE ###\n"
 		if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
 			write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
@@ -1115,8 +1123,8 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			fin=open("temp_trimmed.fasta","r")
 			f_out=open(queryID+'_trimmed.fasta',"w")
-#			for line in fin:
-#				f_out.write(line.replace(" ","_"))
+			for line in fin:
+				f_out.write(line.replace(" ","_"))
 				
 			fin.close()
 			f_out.close()
@@ -1356,13 +1364,13 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 					taxid_list = gi_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gi_to_taxid_dict, v=args.verbose)
 #					print "current length of taxid list: %i" %len(taxid_list)
 
-				if len(gi_to_taxid_dict) > 0:
-					print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
-					rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
+					if len(gi_to_taxid_dict) > 0:
+						print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
+						rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
 
-				print "\ngenerate taxonomy dictionary\n"
-				tax_dict = {}
-				make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+					print "\ngenerate taxonomy dictionary\n"
+					tax_dict = {}
+					make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
 
 				print "\nassign taxonomy\n"
 				taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)

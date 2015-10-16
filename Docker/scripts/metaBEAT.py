@@ -1115,8 +1115,8 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			fin=open("temp_trimmed.fasta","r")
 			f_out=open(queryID+'_trimmed.fasta',"w")
-#			for line in fin:
-#				f_out.write(line.replace(" ","_"))
+			for line in fin:
+				f_out.write(line.replace(" ","_"))
 				
 			fin.close()
 			f_out.close()
