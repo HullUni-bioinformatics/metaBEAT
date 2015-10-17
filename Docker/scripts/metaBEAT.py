@@ -42,7 +42,7 @@ queries = defaultdict(dict)
 seq_info = ['"seqname","accession","tax_id","species_name","is_type"']
 records = {}
 reference_taxa = {}
-taxids = defaultdict(int)
+#taxids = defaultdict(int)
 denovo_taxa = {}
 date = time.strftime("%d-%b-%Y").upper()
 denovo_count = 1
@@ -144,18 +144,20 @@ def rw_gi_to_taxid_dict(dictionary, name, mode):
         
 
 
-def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts):
+def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sampleID):
     "This function filters the centroid fasta file produced by vsearch"
     "and removes all centroid sequences that represent clusters of size"
     "below the specified threshold"
     os.rename(centroid_fasta, centroid_fasta+"_backup")
     f=open(centroid_fasta,"w")
     seqs=list(SeqIO.parse(centroid_fasta+"_backup",'fasta'))
+    total_count = sum(cluster_counts.values())
     for record in seqs:
 #        print record.id
 #        print cluster_counts[record.id]
         if int(cluster_counts[record.id]) >= m_cluster_size:
-            outstring=">%s\n%s\n" % (record.id, record.seq)
+#            outstring=">%s\n%s\n" % (record.id, record.seq)
+            outstring=">%s|%s|%s|%.2f\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/total_count*100, record.seq)
             f.write(outstring)
         else:
             del cluster_counts[record.id]
@@ -420,7 +422,11 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
                         
                 if alignment.hsps[0].bits > (max_bit_score*0.9): #if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
 #                    print alignment.title.split("|")[1]
-                    result['hit'][res.query].append(alignment.title.split("|")[1])
+		    if result['format'] == 'gi':
+                        result['hit'][res.query].append(alignment.title.split("|")[1])
+		    elif result['format'] == 'taxid':
+                        result['hit'][res.query].append(alignment.title.split("|")[-2])
+			
                     if v:
                         print "%s\t%s" %(alignment.hsps[0].bits, alignment.title)
                 else:
@@ -741,7 +747,7 @@ for reffile, refformat in references.items():
 						tax_rank = recs[0]["Rank"]
 						print "ok - found it with taxid \"%s\" at taxonomic rank \"%s\"" %(taxon['IdList'][0],tax_rank)
 						print "I am interpreting \"%s\" as a valid species name and will assign a dummy taxid to it" %seqs[i].features[0].qualifiers['organism'][0]
-						taxids[taxon['IdList'][0]]+= 1
+#						taxids[taxon['IdList'][0]]+= 1
 						if denovo_taxa.has_key(taxon['IdList'][0]):
 							denovo_taxa[taxon['IdList'][0]].append(seqs[i].features[0].qualifiers['organism'][0])
 						else:
@@ -763,13 +769,13 @@ for reffile, refformat in references.items():
 								seqs[i].features[0].qualifiers['db_xref'][j] = "taxon:" + taxid	#update the db_rxref qualifier with the correct taxid
 					else:
 						seqs[i].features[0].qualifiers['db_xref'] = ["taxon:" + taxid]
-					taxids[taxid] += 1
+#					taxids[taxid] += 1
 #					print "adding %s with taxid: %s to the dictionary" %(seqs[i].features[0].qualifiers['organism'][0], taxid)
 					reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
 			else:
 				seqs[i].id = seqs[i].name
 				reference_taxa[seqs[i].features[0].qualifiers['organism'][0]] = taxid
-				taxids[taxid] += 1
+#				taxids[taxid] += 1
 				
 		else:
 			seqs[i].id = seqs[i].name
@@ -819,6 +825,10 @@ if args.fasta:	#this bit writes out the sequences that will become the reference
 
 if args.blast:
 	if args.REFlist:
+		print "\nestablishing taxonomy for reference sequences\n"
+		taxid_list = reference_taxa.values()
+		make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+
 		print "\n### BUILDING BLAST DATABASE ###\n"
 		if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
 			write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
@@ -1135,30 +1145,13 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				os.remove(f) #trimmed.fasta")
 			
 
-#			cmd="zcat %s | fastx_clipper -a CTAGAGGAGCCTGTTCTA | fastq_to_fasta > temp1.fasta" % (querydata[1])
-#			print cmd
-#			cmdlist = shlex.split(cmd)
-#                       cmd = subprocess.call(cmd, shell=True)
-
-#			cmd="zcat %s | fastx_clipper -a GGGGTATCTAATCCCAGT | fastq_to_fasta | fastx_reverse_complement > temp2.fasta" % (querydata[2])
-#			print cmd
-#			cmdlist = shlex.split(cmd)
-#                       cmd = subprocess.call(cmd, shell=True)
-
-#			cmd="cat temp1.fasta temp2.fasta > temp_concat.fasta"
-#			print cmd
-#			cmdlist = shlex.split(cmd)
-#                       cmd = subprocess.call(cmd, shell=True)
-
-
 			queryfile=os.path.abspath('.')+"/"+queryID+'_trimmed.fasta'
 
 		else:
 			queryfile = queries[queryID]['files'][0]
 			print "\nWARNING - EXPECTING input data to come in SINGLE FASTA FILE\n"
 
-		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
-#		unknown_seqs=list(SeqIO.parse(queryfile,'fasta'))	#read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
+		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta')) #read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
 		querycount[queryID] += len(unknown_seqs_dict)
 #		print "The queryfile contains %i query sequences.\n" %querycount[queryID]
 		
@@ -1193,7 +1186,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			if args.clust_cov>1:
 				print "\nreduce cluster files\n"
-				querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts)
+			querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts, sampleID=queryID)
 			
 			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i sequences per cluster) are used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), args.clust_cov)
 		
@@ -1356,13 +1349,13 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 					taxid_list = gi_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gi_to_taxid_dict, v=args.verbose)
 #					print "current length of taxid list: %i" %len(taxid_list)
 
-				if len(gi_to_taxid_dict) > 0:
-					print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
-					rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
+					if len(gi_to_taxid_dict) > 0:
+						print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
+						rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
 
-				print "\ngenerate taxonomy dictionary\n"
-				tax_dict = {}
-				make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+					print "\ngenerate taxonomy dictionary\n"
+					tax_dict = {}
+					make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
 
 				print "\nassign taxonomy\n"
 				taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)
@@ -1405,14 +1398,15 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 						for read in taxonomy_count[tax_rank][hit]:
 #							print "centroid: %s" % read
 #							print "read count in cluster: %i" % cluster_counts[read]
-							current_count+=cluster_counts[read]	#sum up the number of actual reads in the clusters assigned to this taxon
+#							print read.split('|')[1]
+							current_count+=cluster_counts[read.split('|')[1]]	#sum up the number of actual reads in the clusters assigned to this taxon
 							if args.extract_centroid_reads:
-								current_reads.append(read)
+								current_reads.append(read.split('|')[1])
 
 							elif args.extract_all_reads:
-								current_reads.extend(cluster_reads[read])
+								current_reads.extend(cluster_reads[read.split('|')[1]])
 
-							total_per_rank_count+=cluster_counts[read]
+							total_per_rank_count+=cluster_counts[read.split('|')[1]]
 						if not tax_rank == 'nohit':
 							output.append("\t%s: %i (%.2f %%)" % (tax_dict[hit][2], current_count, 100*float(current_count)/querycount[queryID]))
 #						print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
