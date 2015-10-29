@@ -84,7 +84,9 @@ query_group.add_argument("--trim_qual", help="minimum phred quality score (defau
 query_group.add_argument("--trim_window", help="sliding window size (default: 5) for trimming; if average quality drops below the specified minimum quality all subsequent bases are removed from the reads", metavar="<INT>", type=int, action="store", default=5)
 query_group.add_argument("--trim_minlength", help="minimum length of reads to be retained after trimming (default: 50)", metavar="<INT>", type=int, action="store", default=50)
 query_group.add_argument("--merge", help="attempt to merge paired-end reads", action="store_true")
-query_group.add_argument("--product_length", help="estimated length of PCR product (default: 100)", metavar="<INT>", type=int, action="store", default=100)
+query_group.add_argument("--product_length", help="estimated length of PCR product (specifying this option increases merging efficiency)", metavar="<INT>", type=int, action="store")#, default=100)
+query_group.add_argument("--merged_only", help="only process successfully merged read-pairs", action="store_true")
+query_group.add_argument("--length_filter", help="only process reads, which are within +/- 10 percent of this length", metavar="<INT>", type=int, action="store")
 query_group.add_argument("--phred", help="phred quality score offset - 33 or 64 (default: 33)", metavar="<INT>", type=int, action="store", default=33)
 reference_group = parser.add_argument_group('Reference', 'The parameters in this group affect the reference to be used in the analyses')
 reference_group.add_argument("-R", "--REFlist", help="file containing a list of files to be used as reference sequences", metavar="<FILE>", action="store")
@@ -144,24 +146,43 @@ def rw_gi_to_taxid_dict(dictionary, name, mode):
         
 
 
-def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sampleID):
+def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sampleID, length, only_merged):
     "This function filters the centroid fasta file produced by vsearch"
     "and removes all centroid sequences that represent clusters of size"
     "below the specified threshold"
+    badstring="" #start with an emtpy string
     os.rename(centroid_fasta, centroid_fasta+"_backup")
     f=open(centroid_fasta,"w")
     seqs=list(SeqIO.parse(centroid_fasta+"_backup",'fasta'))
     total_count = sum(cluster_counts.values())
     for record in seqs:
-#        print record.id
+        print "processing %s" %record.id
 #        print cluster_counts[record.id]
         if int(cluster_counts[record.id]) >= m_cluster_size:
+	    if only_merged and not record.id.endswith('ex'):
+		print "excluding %s from further analyses - merged_only filter\n" %record.id
+                badstring+=">%s|%s|%s|%.2f|merged_only_filter\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/total_count*100, record.seq)
+                del cluster_counts[record.id]
+		continue
+	    if length:
+    		if len(record.seq) < length*0.9 or len(record.seq) > length*1.1:
+		    print "excluding %s from further analyses - length filter\n" %record.id
+		    badstring+=">%s|%s|%s|%.2f|length_filter\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/total_count*100, record.seq)
+            	    del cluster_counts[record.id]
+		    continue
 #            outstring=">%s\n%s\n" % (record.id, record.seq)
             outstring=">%s|%s|%s|%.2f\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/total_count*100, record.seq)
             f.write(outstring)
         else:
+	    print "excluding %s from further analyses - cluster_size filter\n" %record.id
+            badstring+=">%s|%s|%s|%.2f|minimum_cluster_filter\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/total_count*100, record.seq)
             del cluster_counts[record.id]
     f.close()
+
+    if badstring:
+	bad=open(centroid_fasta+"_removed", "w")
+	bad.write(badstring)
+	bad.close()
 
     good_read_count = 0
     for ID in cluster_counts.keys():        #count the number of reads in the retained clusters
@@ -1186,7 +1207,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 			if args.clust_cov>1:
 				print "\nreduce cluster files\n"
-			querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts, sampleID=queryID)
+			querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts, sampleID=queryID, length=args.length_filter, only_merged=args.merged_only)
 			
 			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (minimum of %i sequences per cluster) are used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), args.clust_cov)
 		

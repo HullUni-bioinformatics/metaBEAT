@@ -26,6 +26,9 @@ ADD external_software/fastq_to_fasta /usr/bin/
 ADD external_software/fastx_clipper /usr/bin/
 ADD external_software/fastx_reverse_complement /usr/bin/
 ADD external_software/process_shortreads /usr/bin/
+ADD external_software/fastq_quality_trimmer /usr/bin/
+ADD external_software/fastq_quality_filter /usr/bin/
+
 
 RUN mkdir /src
 ENV PATH /src:$PATH
@@ -33,15 +36,14 @@ RUN mkdir /home/working
 
 #create taxonomy database
 RUN taxit new_database -d /src/taxonomy.db
+
 RUN rm /src/taxdmp.zip
 RUN mv /src/taxonomy.db /usr/bin/
 
+#add scripts
 ADD scripts/fetch_from_db.py /usr/bin/
 ADD scripts/metaBEAT.py /usr/bin/
 ADD scripts/jplace_to_biom.py /usr/bin/
-
-ADD external_software/fastq_quality_trimmer /usr/bin/
-ADD external_software/fastq_quality_filter /usr/bin/
 
 #create mount point at /working
 RUN mkdir /home/working/IN
