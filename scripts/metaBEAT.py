@@ -1386,7 +1386,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 					tax_dict = {}
 					make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
 				elif res_dict['format'] == 'unknown': #blast_filter function did not assign a format because no good hit was found to actually assess the format
-					if not tax_dict.has_key['tax_id']: #in this rare case I check if the tax_dict is in the proper format and if not
+					if not tax_dict.has_key('tax_id'): #in this rare case I check if the tax_dict is in the proper format and if not
                                         	tax_dict['tax_id'] = [] #just add the tax_id key and an empty list 
 
 				print "\nassign taxonomy\n"
