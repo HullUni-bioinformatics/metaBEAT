@@ -32,7 +32,7 @@ import shlex, subprocess
 ##############set this, or put a file called taxonomy.db in the same directory as the metaBEAT.py script############
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 #############################################################################
-VERSION="0.7"
+VERSION="0.8"
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
 methods = []	#this list will contain the list of methods to be applied to the queries
 all_seqs = []
@@ -300,6 +300,10 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
         print "WARNING: any taxa without valid taxid will not be included -  NEEDS TO BE FIXED IF PHYLOGENETIC PLACEMENT IS PLANNED"
     print "\n"+cmd
     taxtable,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+    if err:
+	print "something went wrong while building the reduced taxonomy:"
+	print err
+	sys.exit()
 
     taxtable = open("taxa.csv","r")
     for line in taxtable:
@@ -323,10 +327,10 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
                     local[1] = 'species'
                     local[2] = deno
                     local[-1] = reference_taxa[deno]
-                    tax_dict[reference_taxa[deno]] = local
+                    out_tax_dict[reference_taxa[deno]] = local
 
-	while tax_dict['tax_id'][-1] != 'species': #this should get rid of any 'subspecies' or 'varietas' levels
-            tax_dict['tax_id'].pop(-1)
+	while out_tax_dict['tax_id'][-1] != 'species': #this should get rid of any 'subspecies' or 'varietas' levels
+            out_tax_dict['tax_id'].pop(-1)
 
 
 
@@ -456,6 +460,10 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
 #            print "%s: %s" %(res.query, result['hit'][res.query])
 
     print "%i queries processed" %count
+    
+    if not result['format']:	#if no database format could be determined at this point that means there was no significant hit, so we set the format to unknown
+	result['format'] = 'unknown'
+
     return result
 
 def file_check(file_to_test, optional_message=None):
@@ -1377,6 +1385,9 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 					print "\ngenerate taxonomy dictionary\n"
 					tax_dict = {}
 					make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+				elif res_dict['format'] == 'unknown': #blast_filter function did not assign a format because no good hit was found to actually assess the format
+					if not tax_dict.has_key['tax_id']: #in this rare case I check if the tax_dict is in the proper format and if not
+                                        	tax_dict['tax_id'] = [] #just add the tax_id key and an empty list 
 
 				print "\nassign taxonomy\n"
 				taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)
