@@ -20,6 +20,7 @@ from itertools import product
 
 Entrez.email = "" 
 import time
+from datetime import datetime
 import re
 import sys, warnings
 import argparse
@@ -113,6 +114,9 @@ biom_group.add_argument("-o","--output_prefix", help="prefix for BIOM output fil
 biom_group.add_argument("--metadata", help="comma delimited file containing metadata (optional)", action="store")
 biom_group.add_argument("--mock_meta_data", help="add mock metadata to the samples in the BIOM output", action="store_true")
 
+Entrez_group = parser.add_argument_group('Entrez identification','metaBEAT is querying the NCBI Entrez databases, please provide an email address for identification')
+Entrez_group.add_argument("-@", "--email", help='provide your email address for identification to NCBI', metavar='<email-address>', action="store", default="")
+
 parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
 args = parser.parse_args()
 
@@ -129,14 +133,19 @@ def check_email(mail):
 	The function checks that you provide an email address to Entrez
 	"""
 
-	print "\nmetaBEAT is going to query NCBI's Entrez databases to fetch taxonomic ids. Entrez User requirements state that you need to identify yourself by providing an email address so that NCBI can contact you in case there is a problem.\n"
+	print "\nmetaBEAT may be querying NCBI's Entrez databases to fetch/verify taxonomic ids. Entrez User requirements state that you need to identify yourself by providing an email address so that NCBI can contact you in case there is a problem.\n"
 
 	
 	if not mail:
-		print "As the mail address is not specified in the script itself (variable 'Entrez.email'), metaBEAT expects a simple text file called 'user_email.txt' that contains your email address in the same location of the metaBEAT.py script (in your case: %s/)\n" %os.path.dirname(sys.argv[0])
+		print "As the mail address is not specified in the script itself (variable 'Entrez.email'), metaBEAT expects a simple text file called 'user_email.txt' that contains your email address (first line of file) in the same location as the metaBEAT.py script (in your case: %s/)\n" %os.path.dirname(sys.argv[0])
 		if not os.path.isfile(os.path.dirname(sys.argv[0])+'/user_email.txt'):
-			print "Did not find the file %s/user_email.txt - exit\n" %os.path.dirname(sys.argv[0])
+			print "Did not find the file %s/user_email.txt - you may specify your email address also via the '-@' command line option\n" %os.path.dirname(sys.argv[0])
 			sys.exit()	
+		now = datetime.today()
+		modify_date = datetime.fromtimestamp(os.path.getmtime(os.path.dirname(sys.argv[0])+'/user_email.txt'))
+		if (now-modify_date).days > 7:
+			print "%s/user_email.txt is older than 7 days - Please make sure it's up to date or specify email address via the '-@' option\n" %os.path.dirname(sys.argv[0])
+			sys.exit()
 		FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','r')
 		mail = FH.readline().strip()
 		FH.close()
@@ -536,6 +545,8 @@ def write_out_refs_to_fasta(ref_seqs, ref_taxids = {}):
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
 
+if args.email:
+	Entrez.email = args.email
 Entrez.email = check_email(mail = Entrez.email)#mail=Entrez.email)	
 
 if args.blast or args.phyloplace:
