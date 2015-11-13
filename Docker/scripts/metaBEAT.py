@@ -153,8 +153,13 @@ def check_email(mail):
 			print "\nnot sure %s is an email address\n" %mail
 			sys.exit()
 		print "found '%s' in %s/user_email.txt\n" %(mail, os.path.dirname(sys.argv[0]))
+		
 	else:
 		print "You have specified: '%s'\n" %(mail)
+
+	FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','w')
+	FH.write(mail)
+	FH.close()
 
 	return mail
 	
