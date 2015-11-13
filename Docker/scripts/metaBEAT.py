@@ -18,7 +18,7 @@ import json
 import gzip
 from itertools import product
 
-Entrez.email = "c.hahn@hull.ac.uk"
+Entrez.email = "" 
 import time
 import re
 import sys, warnings
@@ -29,8 +29,11 @@ from os import rename
 from collections import defaultdict
 import shlex, subprocess
 
+
+
 ##############set this, or put a file called taxonomy.db in the same directory as the metaBEAT.py script############
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
+	
 #############################################################################
 VERSION="0.8"
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
@@ -113,12 +116,40 @@ biom_group.add_argument("--mock_meta_data", help="add mock metadata to the sampl
 parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
 args = parser.parse_args()
 
+
 if len(sys.argv) < 2:	#if the script is called without any arguments display the usage
     parser.print_usage()
     sys.exit(1)
 
 
-###FUNCITONS
+###FUNCTIONS
+
+def check_email(mail):
+	"""
+	The function checks that you provide an email address to Entrez
+	"""
+
+	print "\nmetaBEAT is going to query NCBI's Entrez databases to fetch taxonomic ids. Entrez User requirements state that you need to identify yourself by providing an email address so that NCBI can contact you in case there is a problem.\n"
+
+	
+	if not mail:
+		print "As the mail address is not specified in the script itself (variable 'Entrez.email'), metaBEAT expects a simple text file called 'user_email.txt' that contains your email address in the same location of the metaBEAT.py script (in your case: %s/)\n" %os.path.dirname(sys.argv[0])
+		if not os.path.isfile(os.path.dirname(sys.argv[0])+'/user_email.txt'):
+			print "Did not find the file %s/user_email.txt - exit\n" %os.path.dirname(sys.argv[0])
+			sys.exit()	
+		FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','r')
+		mail = FH.readline().strip()
+		FH.close()
+		if not '@' in mail:
+			print "\nnot sure %s is an email address\n" %mail
+			sys.exit()
+		print "found '%s' in %s/user_email.txt\n" %(mail, os.path.dirname(sys.argv[0]))
+	else:
+		print "You have specified: '%s'\n" %(mail)
+
+	return mail
+	
+
 def rw_gi_to_taxid_dict(dictionary, name, mode):
     '''
     The function writes a dictionary to a file ('key,value')
@@ -505,6 +536,8 @@ def write_out_refs_to_fasta(ref_seqs, ref_taxids = {}):
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
 
+Entrez.email = check_email(mail = Entrez.email)#mail=Entrez.email)	
+
 if args.blast or args.phyloplace:
 	taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
 
@@ -854,8 +887,8 @@ if args.fasta:	#this bit writes out the sequences that will become the reference
 
 if args.blast:
 	if args.REFlist:
-		print "\nestablishing taxonomy for reference sequences\n"
-		taxid_list = reference_taxa.values()
+		print "\nestablishing taxonomy for reference sequences from custom database\n"
+		taxid_list = [i for i in reference_taxa.values() if not 'denovo' in i] # reference_taxa.values()
 		make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
 
 		print "\n### BUILDING BLAST DATABASE ###\n"
