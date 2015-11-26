@@ -90,6 +90,7 @@ query_group.add_argument("--trim_minlength", help="minimum length of reads to be
 query_group.add_argument("--merge", help="attempt to merge paired-end reads", action="store_true")
 query_group.add_argument("--product_length", help="estimated length of PCR product (specifying this option increases merging efficiency)", metavar="<INT>", type=int, action="store")#, default=100)
 query_group.add_argument("--merged_only", help="only process successfully merged read-pairs", action="store_true")
+query_group.add_argument("--forward_only", help="only process sequences that contain forward reads (i.e. unmerged forward reads and merged reads)", action="store_true")
 query_group.add_argument("--length_filter", help="only process reads, which are within +/- 10 percent of this length", metavar="<INT>", type=int, action="store")
 query_group.add_argument("--phred", help="phred quality score offset - 33 or 64 (default: 33)", metavar="<INT>", type=int, action="store", default=33)
 reference_group = parser.add_argument_group('Reference', 'The parameters in this group affect the reference to be used in the analyses')
@@ -173,13 +174,17 @@ def concat_and_filter_by_length(inlist, outfile, excludefile, form='fasta', leng
 	return count
 
 
-def keep_only(inlist, pattern):
+def keep_only(inlist, pattern_list):
 	"""
 	The function reduced a list to only the elements that contain a pattern
 	"""
 	for i in reversed(range(len(inlist))):
-		if not pattern in inlist[i]:
-			del inlist[i]
+		for j in range(len(pattern_list)):
+			if pattern_list[j] in inlist[i]:
+				break
+			
+			if j == len(pattern_list)-1:
+				del inlist[i]
 
 
 def check_email(mail):
@@ -249,6 +254,9 @@ def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sample
     "This function filters the centroid fasta file produced by vsearch"
     "and removes all centroid sequences that represent clusters of size"
     "below the specified threshold"
+
+    from Bio import SeqIO
+
     badstring="" #start with an emtpy string
     good_seqs = []
     bad_seqs = []
@@ -280,9 +288,10 @@ def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sample
     total_count = sum(cluster_counts.values())
    
     f=open(centroid_fasta,"w")
-    for record in good_seqs:
-        outstring=">%s|%s|%s|%.2f\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/total_count*100, record.seq)
-        f.write(outstring)
+    SeqIO.write(good_seqs, f, "fasta")
+#    for record in good_seqs:
+#        outstring=">%s|%s|%s|%.2f\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/total_count*100, record.seq)
+#        f.write(outstring)
     f.close()
     del good_seqs
 
@@ -1237,17 +1246,18 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				
 #				print read_stats
 
-				print "\n### JUST SOME FILE WRANGLING - Fastq to fasta ###\n"
-
-				print trimmed_files
+				print "\n### Fastq to fasta (plus filtering for length, merged-only, etc. if applicable) ###\n"
 
 				if args.merged_only:
-					keep_only(inlist=trimmed_files, pattern='.extendedFrags.fastq.gz')
+					print "\nkeeping only merged reads for subsequent analyses"
+					keep_only(inlist=trimmed_files, pattern_list=['.extendedFrags.fastq.gz'])
 
-				print trimmed_files
+				if args.forward_only:
+					print "\nkeeping only forward sequences (non merged forward and merged reads) for subsequent analyses"
+					keep_only(inlist=trimmed_files, pattern_list=['.extendedFrags.fastq.gz', '_forward', 'notCombined_1'])
 			
 				survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=queryID+'_excluded.fasta', form='fasta', length=args.length_filter)
-				print "\n%i seqeunces survived filtering\n" %survived
+				print "\n%i sequences survived filtering\n" %survived
 #				sys.exit()
 
 
@@ -1310,12 +1320,9 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 			queryfile = queries[queryID]['files'][0]
 			print "\nWARNING - EXPECTING input data to come in SINGLE FASTA FILE\n"
 
-		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta')) #read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
-		querycount[queryID] += len(unknown_seqs_dict)
-#		print "The queryfile contains %i query sequences.\n" %querycount[queryID]
-		
-		cluster_counts = {}
-		cluster_reads = defaultdict(list)
+
+		#getting number of sequences to be queried		
+		total_queries = len(list(SeqIO.parse(queryfile,'fasta')))
 
 		if args.cluster:
 			##running clustering
@@ -1332,19 +1339,21 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 #			all_clust_count = int(0)
 			
 			print "\nparse vsearch uc file\n"
+			cluster_counts = {}
+			cluster_reads = defaultdict(list)
 			parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
 			
 
-			total_queries = querycount[queryID]
+#			total_queries = querycount[queryID]
 			total_clusters = len(cluster_counts)
 			
 			if args.clust_cov>1:
 				print "\nreduce cluster files\n"
 			querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts, sampleID=queryID, v=args.verbose)		
-			for ID in unknown_seqs_dict.keys():
-				if cluster_counts.has_key(ID):
-					unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-#				print unknown_seqs_dict[ID].description
+#			for ID in unknown_seqs_dict.keys():
+#				if cluster_counts.has_key(ID):
+#					unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+##				print unknown_seqs_dict[ID].description
 
 			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (representing %i sequences) passed the filter criteria (minimum of %i sequences per cluster) and will be used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), querycount[queryID], args.clust_cov)
 		
@@ -1355,14 +1364,31 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 			read_stats[queryID]['queries'] = querycount[queryID]
 
 			queryfile = os.path.abspath('.')+"/"+"%s_centroids.fasta" %queryID #"../%s_centroids.fasta" % queryID
+
+			unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
+			for ID in unknown_seqs_dict.keys():
+                                if cluster_counts.has_key(ID):
+                                        unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+#                               print unknown_seqs_dict[ID].description
+
+
 		else:
+			unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta')) #read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
+			querycount[queryID] += len(unknown_seqs_dict)
+			print "The queryfile contains %i query sequences.\n" %querycount[queryID]
+		
+			cluster_counts = {}
+			cluster_reads = defaultdict(list)
+
 			for ID in unknown_seqs_dict.keys():
 #				print sequence
 				cluster_counts[unknown_seqs_dict[ID].description] = 1
 				cluster_reads[unknown_seqs_dict[ID].description] = [unknown_seqs_dict[ID].description]
+#				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
 				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-				
+				print unknown_seqs_dict[ID]
 			read_stats[queryID]['queries'] = querycount[queryID]
+
 
 		print "WRITING BASIC READ STATS TO FILE\n"
 		read_counts_out = open("../reads_stats.csv","a")
@@ -1561,15 +1587,19 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 						for read in taxonomy_count[tax_rank][hit]:
 #							print "centroid: %s" % read
 #							print "read count in cluster: %i" % cluster_counts[read]
-#							print read.split('|')[1]
-							current_count+=cluster_counts[read.split('|')[1]]	#sum up the number of actual reads in the clusters assigned to this taxon
+##							print read.split('|')[1]
+#							current_count+=cluster_counts[read.split('|')[1]]	#sum up the number of actual reads in the clusters assigned to this taxon
+							current_count+=cluster_counts[read]	#sum up the number of actual reads in the clusters assigned to this taxon
 							if args.extract_centroid_reads:
-								current_reads.append(read.split('|')[1])
+#								current_reads.append(read.split('|')[1])
+								current_reads.append(read)
 
 							elif args.extract_all_reads:
-								current_reads.extend(cluster_reads[read.split('|')[1]])
+#								current_reads.extend(cluster_reads[read.split('|')[1]])
+								current_reads.extend(cluster_reads[read])
 
-							total_per_rank_count+=cluster_counts[read.split('|')[1]]
+#							total_per_rank_count+=cluster_counts[read.split('|')[1]]
+							total_per_rank_count+=cluster_counts[read]
 						if not tax_rank == 'nohit':
 							output.append("\t%s: %i (%.2f %%)" % (tax_dict[hit][2], current_count, 100*float(current_count)/querycount[queryID]))
 #						print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
