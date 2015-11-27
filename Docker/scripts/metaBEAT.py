@@ -278,7 +278,8 @@ def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sample
     if bad_seqs:
 	bad=open(centroid_fasta+"_removed", "w")
 	for record in bad_seqs:
-            badstring+=">%s|%s|%s|%.2f|minimum_cluster_filter\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/(total_count-badcount)*100, record.seq)
+#            badstring+=">%s|%s|%s|%.2f|minimum_cluster_filter\n%s\n" % (sampleID, record.id, cluster_counts[record.id], float(cluster_counts[record.id])/(total_count-badcount)*100, record.seq) #potetial problems with divisions by zero
+            badstring+=">%s|%s|%s|minimum_cluster_filter\n%s\n" % (sampleID, record.id, cluster_counts[record.id], record.seq) #potetial problems with divisions by zero
             del cluster_counts[record.id]
 
 	bad.write(badstring)
@@ -637,6 +638,11 @@ if args.phyloplace:
 		print "\nPhylogenetic placement currently requires a blast search first to determine the set of queries for which phylogenetic placement is attempted - add the --blast flag to your command\n"
 		sys.exit()	
 	args.refpkg = os.path.abspath(args.refpkg) 
+
+if args.product_length:
+	args.product_length = '-M %s' %args.product_length
+else:
+	args.product_length = ''
 
 
 if args.REFlist and args.blast_db:
@@ -1219,7 +1225,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				if args.merge:
 					print "\n### MERGING READ PAIRS ###\n"
 					print "merging paired-end reads with flash\n"
-					cmd="flash %s %s -M %s -t %i -p %i -o %s -z" % ( trimmed_files[0], trimmed_files[2], args.product_length, args.n_threads, args.phred, queryID)
+					cmd="flash %s %s %s -t %i -p %i -o %s -z" % ( trimmed_files[0], trimmed_files[2], args.product_length, args.n_threads, args.phred, queryID)
 					print cmd
 					cmdlist = shlex.split(cmd)
 					cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
@@ -1371,6 +1377,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
                                         unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
 #                               print unknown_seqs_dict[ID].description
 
+			queries[queryID]['uc'] = os.path.abspath('.')+"/"+queryID+'.uc'
 
 		else:
 			unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta')) #read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
@@ -1400,6 +1407,9 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				outstring += ',NA'
 		read_counts_out.write(outstring+"\n")
 		read_counts_out.close()
+
+		queries[queryID]['queryfile'] = queryfile
+		print "\n%s\n" %queries[queryID]
 	
 		
 #		print "BEFORE BLAST"
