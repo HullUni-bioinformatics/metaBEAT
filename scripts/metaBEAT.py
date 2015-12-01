@@ -129,6 +129,38 @@ if len(sys.argv) < 2:	#if the script is called without any arguments display the
 
 ###FUNCTIONS
 
+def concatenate_for_global_clustering(queries_dict, out):
+	"""
+	The function concatenates the query files from all samples and adds the sample IDs to the headers in the process
+	"""
+	from Bio import SeqIO
+	OUT = open(out, 'w')
+	for sampleID in queries_dict.keys():
+		
+		queries = list(SeqIO.parse(open(queries_dict[sampleID]['queryfile']),'fasta'))
+		
+		for rec in queries:
+			rec.description = sampleID+'|'+rec.id
+			rec.id = rec.description
+	
+		SeqIO.write(queries, OUT, 'fasta')
+		
+	OUT.close()
+
+def vsearch_cluster(infile, cluster_match, threads, sampleID):
+	"""
+	The function runs vsearch
+	"""
+	import shlex, subprocess
+
+	cmd = "vsearch --cluster_fast %s --id %.2f --strand both --threads %s --centroids %s_centroids.fasta --uc %s.uc" % (infile, cluster_match, threads, sampleID, sampleID)
+        print cmd
+        cmdlist = shlex.split(cmd)
+        stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+        if stdout:
+	        print stdout
+
+
 def concat_and_filter_by_length(inlist, outfile, excludefile, form='fasta', length=0):
 	"""
 	The Function concatenates sequences from a list of files into a single file and
@@ -188,39 +220,43 @@ def keep_only(inlist, pattern_list):
 
 
 def check_email(mail):
-	"""
-	The function checks that you provide an email address to Entrez
-	"""
+        """
+        The function checks that you provide an email address to Entrez
+        """
 
-	print "\nmetaBEAT may be querying NCBI's Entrez databases to fetch/verify taxonomic ids. Entrez User requirements state that you need to identify yourself by providing an email address so that NCBI can contact you in case there is a problem.\n"
+        print "\nmetaBEAT may be querying NCBI's Entrez databases to fetch/verify taxonomic ids. Entrez User requirements state that you need to identify yourself by providing an email address so that NCBI can contact you in case there is a problem.\n"
 
-	
-	if not mail:
-		print "As the mail address is not specified in the script itself (variable 'Entrez.email'), metaBEAT expects a simple text file called 'user_email.txt' that contains your email address (first line of file) in the same location as the metaBEAT.py script (in your case: %s/)\n" %os.path.dirname(sys.argv[0])
-		if not os.path.isfile(os.path.dirname(sys.argv[0])+'/user_email.txt'):
-			print "Did not find the file %s/user_email.txt - you may specify your email address also via the '-@' command line option\n" %os.path.dirname(sys.argv[0])
-			sys.exit()	
-		now = datetime.today()
-		modify_date = datetime.fromtimestamp(os.path.getmtime(os.path.dirname(sys.argv[0])+'/user_email.txt'))
-		if (now-modify_date).days > 7:
-			print "%s/user_email.txt is older than 7 days - Please make sure it's up to date or specify email address via the '-@' option\n" %os.path.dirname(sys.argv[0])
-			sys.exit()
-		FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','r')
-		mail = FH.readline().strip()
-		FH.close()
-		if not '@' in mail:
-			print "\nnot sure %s is an email address\n" %mail
-			sys.exit()
-		print "found '%s' in %s/user_email.txt\n" %(mail, os.path.dirname(sys.argv[0]))
-		
-	else:
-		print "You have specified: '%s'\n" %(mail)
 
-	FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','w')
-	FH.write(mail)
-	FH.close()
+        if not mail:
+                print "As the mail address is not specified in the script itself (variable 'Entrez.email'), metaBEAT expects a simple text file called 'user_email.txt' that contains your email address (first line of file) in the same location as the metaBEAT.py script (in your case: %s/)\n" %os.path.dirname(sys.argv[0])
+                if not os.path.isfile(os.path.dirname(sys.argv[0])+'/user_email.txt'):
+                        print "Did not find the file %s/user_email.txt - you may specify your email address also via the '-@' command line option\n" %os.path.dirname(sys.argv[0])
+                        sys.exit()
+                now = datetime.today()
+                modify_date = datetime.fromtimestamp(os.path.getmtime(os.path.dirname(sys.argv[0])+'/user_email.txt'))
+                if (now-modify_date).days > 7:
+                        print "%s/user_email.txt is older than 7 days - Please make sure it's up to date or specify email address via the '-@' option\n" %os.path.dirname(sys.argv[0])
+                        sys.exit()
+                FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','r')
+                mail = FH.readline().strip()
+                FH.close()
+                if not '@' in mail:
+                        print "\nnot sure %s is an email address - please make sure it's valid\n" %mail
+                        sys.exit()
+                print "found '%s' in %s/user_email.txt\n" %(mail, os.path.dirname(sys.argv[0]))
 
-	return mail
+        else:
+                if not '@' in mail:
+                        print "\nnot sure %s is an email address - please make sure it's valid\n" %mail
+                        sys.exit()
+                print "You have specified: '%s'\n" %(mail)
+
+                FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','w')
+                FH.write(mail)
+                FH.close()
+
+        return mail
+
 	
 
 def rw_gi_to_taxid_dict(dictionary, name, mode):
@@ -300,7 +336,7 @@ def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sample
 
 
 
-def parse_vsearch_uc(fil, cluster_counts, cluster_reads, extract_reads=1):
+def parse_vsearch_uc(fil, cluster_counts, cluster_reads, extract_reads=0):
     "The function parses the 'uc' file from vsearch"
     f=open(fil,"r")
     for line in [l.strip() for l in f]: #loop through the file one line at a time, stripping off any newline characters
@@ -522,6 +558,7 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
     result = {'format':''}
     count=0
     for res in b_result:
+        bit_score_cutoff = 0.9 #that's the default setting, i.e. top 10% of top bit score
         count += 1
         if v:
             print "\nquery: %s" % res.query #the current query
@@ -542,7 +579,13 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
         else: #if a hit has been found
 	    if not result.has_key('hit'):
 		result['hit'] = {}
-            
+
+            if (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) == 1): #if we have a full length 100 % match adjust the bitscore so window so that only this hit is considered
+                bit_score_cutoff = 1
+                if v:
+                        print "\nFull length match:\n"
+                        print "Query length: %s\nnumber of identitites: %s" %(str(len(res.alignments[0].hsps[0].query)), str(res.alignments[0].hsps[0].identities))
+        
             max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
             result['hit'][res.query]=[] #create empty list for query
             for alignment in res.alignments: #for each hit of the current query
@@ -984,7 +1027,14 @@ if args.fasta:	#this bit writes out the sequences that will become the reference
 	write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
 
 if args.blast:
+	if not os.path.exists('GLOBAL'):
+		os.makedirs('GLOBAL')
+	os.chdir('GLOBAL')
+	
 	if args.REFlist:
+		if not os.path.exists('BLAST_'+str(args.min_ident)):
+			os.makedirs('BLAST_'+str(args.min_ident))
+		os.chdir('BLAST_'+str(args.min_ident))
 		print "\nestablishing taxonomy for reference sequences from custom database\n"
 		taxid_list = reference_taxa.values()
 #		taxid_list = [i for i in reference_taxa.values() if not 'denovo' in i] # reference_taxa.values()
@@ -1003,10 +1053,12 @@ if args.blast:
 			print stdout
 	
 		blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
+		os.chdir('..')
 	elif args.blast_db:
 		print "\n### USING PRECOMPILED BLAST DATABASE (%s) ###\n" %args.blast_db
 		blast_db = args.blast_db
 
+	os.chdir('../')
 
 #start read stats output
 read_counts_out = open("reads_stats.csv","w")
@@ -1019,10 +1071,10 @@ print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
 if args.blast or args.phyloplace or args.merge or args.cluster:
 	##determine which methods will be applied
-	if args.blast:
-		methods.append('blast')
-	if args.phyloplace:
-		methods.append('pplacer')
+#	if args.blast:
+#		methods.append('blast')
+#	if args.phyloplace:
+#		methods.append('pplacer')
 
 	print "\n######## PROCESSING QUERIES ########\n"
 	if files_to_barcodes:
@@ -1102,8 +1154,6 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 #		query_count += 1
 #	for queryID, querydata in sorted(queries.items()): #loop through the query files and read in the current query id and the path to the files
 		print "\n##### processing query ID: %s #####\n" % (queryID)
-		species_count = defaultdict(list)
-		taxonomy_count = defaultdict(dict)
 		if not os.path.exists(queryID):
 			os.makedirs(queryID)
 		
@@ -1334,12 +1384,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 			##running clustering
 			print "\n### CLUSTERING ###\n"
 			print "\nclustering using vsearch"
-			cmd = "vsearch --cluster_fast %s --id %.2f --strand both --threads %s --centroids %s_centroids.fasta --uc %s.uc" % (queryfile, args.clust_match, args.n_threads, queryID, queryID )
-			print cmd
-			cmdlist = shlex.split(cmd)
-		        stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-			if stdout:
-				print stdout
+			vsearch_cluster(infile=queryfile, cluster_match=args.clust_match, threads=args.n_threads, sampleID=queryID)
 	
 			#read in the results from the clustering, i.e. number of reads per cluster, later I could read in the actual read ids to allow for retrievel of reads assigned to a given taxon
 #			all_clust_count = int(0)
@@ -1349,6 +1394,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 			cluster_reads = defaultdict(list)
 			parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
 			
+			print cluster_reads.keys()
 
 #			total_queries = querycount[queryID]
 			total_clusters = len(cluster_counts)
@@ -1393,7 +1439,6 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				cluster_reads[unknown_seqs_dict[ID].description] = [unknown_seqs_dict[ID].description]
 #				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
 				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-				print unknown_seqs_dict[ID]
 			read_stats[queryID]['queries'] = querycount[queryID]
 
 
@@ -1409,9 +1454,370 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 		read_counts_out.close()
 
 		queries[queryID]['queryfile'] = queryfile
-		print "\n%s\n" %queries[queryID]
+		queries[queryID]['cluster_counts'] = dict(cluster_counts)
+		queries[queryID]['cluster_reads'] = dict(cluster_reads)
+#		print "\n%s\n" %queries[queryID]
 	
+		os.chdir('../') #leave directory for query
+
+
+############
+if not os.path.exists('GLOBAL'):
+	os.makedirs('GLOBAL')
+os.chdir('GLOBAL')
+
+global_queries = os.getcwd()+'/global_queries.fasta'
+global_centroids = os.getcwd()+'/global_centroids.fasta'
+global_uc = os.getcwd()+'/global.uc'
+
+#print global_queries
+
+print "\nConcatenating for global clustering\n"
+concatenate_for_global_clustering(queries_dict=queries, out=global_queries)
+
+print "\nPerforming global clustering\n"
+vsearch_cluster(infile=global_queries, cluster_match=args.clust_match, threads=args.n_threads, sampleID='global')
+
+global_cluster_count=0
+for i in SeqIO.parse(open(global_centroids), 'fasta'):
+	global_cluster_count += 1
+
+print "\nparse vsearch uc file\n"
+global_cluster_counts = {}
+global_cluster_reads = defaultdict(list)
+parse_vsearch_uc(fil=global_uc, cluster_counts=global_cluster_counts, extract_reads=True, cluster_reads=global_cluster_reads)
+
+if args.blast or args.phyloplace:
+	if args.blast:
+                methods.append('blast')
+        if args.phyloplace:
+                methods.append('pplacer')
+
+	for approach in methods:
+		if approach == 'blast' and global_cluster_count > 0:
 		
+			if not os.path.exists('BLAST_'+str(args.min_ident)):
+				os.makedirs('BLAST_'+str(args.min_ident))
+			os.chdir('BLAST_'+str(args.min_ident))
+			print "\n### RUNNING BLAST ###\n"
+
+			print "running blast search against database %s" % blast_db
+			blast_out = "global_blastn.out.xml"# % (args.marker, queryID)
+			blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (global_centroids, blast_db, blast_out, args.n_threads) 
+			print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
+
+#			blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
+#			cmdlist = shlex.split(blast_cmd)
+#			stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
+
+			blast_handle = NcbiblastxCommandline(cmd='blastn', query=global_centroids, db=blast_db, evalue=1e-20, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
+			stdout, stderr = blast_handle()
+
+			print '\n'+time.strftime("%c")+'\n'
+			print "\n### INTERPRETING BLAST RESULTS ###\n"
+			blast_result_handle = open(blast_out) #read in blast result (in xml format)
+
+			print "\nparse blast xml file\n"
+			blast_results = NCBIXML.parse(blast_result_handle) #parse blast xml file
+
+			print "get top 10% hits from blast output .. ",
+			res_dict = {}
+			res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit)
+
+			if res_dict['format'] == 'gi':	#This is the case if BLAST was performed against Genbank
+				print '\n'+time.strftime("%c")+'\n'
+				print "\nfetch taxids for gis\n"
+#				print "current length of taxid list: %i" %len(taxid_list)
+				taxid_list = gi_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gi_to_taxid_dict, v=args.verbose)
+#				print "current length of taxid list: %i" %len(taxid_list)
+
+				if len(gi_to_taxid_dict) > 0:
+					print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
+					rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
+
+				print "\ngenerate taxonomy dictionary\n"
+				#tax_dict = {}
+				make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+
+			elif res_dict['format'] == 'unknown': #blast_filter function did not assign a format because no good hit was found to actually assess the format
+				if not tax_dict.has_key('tax_id'): #in this rare case I check if the tax_dict is in the proper format and if not
+                                       	tax_dict['tax_id'] = [] #just add the tax_id key and an empty list 
+
+			print "\nassign taxonomy\n"
+			taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)
+
+
+
+		elif approach == 'pplacer' and global_cluster_count > 0:
+			taxonomy_count = defaultdict(dict)
+                        print "\n##### PHYLOGENETIC PLACEMENT #####\n"
+
+
+
+
+################### done with assignments - THIS SHOULD BECOME A SEPARATE LOOP OVER the global results for each method
+#		print taxonomy_count
+
+		if taxonomy_count.has_key('nohit'):
+			tax_dict["tax_id"].insert(0,'nohit')
+
+		if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
+                	tax_dict['tax_id'] = ['nohit']
+
+		print "\n#### RESULT SUMMARY: %s ####\n" %approach
+
+                for tax_rank in reversed(tax_dict["tax_id"]):
+#               	print "The current rank to be checked is: %s" %tax_rank
+                	if taxonomy_count.has_key(tax_rank):
+#				print "\nLooking at taxonomic rank: %s\n" %tax_rank
+				for hit in sorted(taxonomy_count[tax_rank].keys()):
+#					print "assignemnt: %s" %hit
+                                	if not tax_rank == 'nohit':
+                                        	global_taxids_hit.append(hit)
+
+					global_taxa[tax_rank][hit] = []
+                                        global_clust[tax_rank][hit] = []
+
+					for sampleID in sorted(queries):
+						temp_cluster_id = []
+#						print "checking sample: %s" %sampleID
+						global_taxa[tax_rank][hit].append(int(0))
+						global_clust[tax_rank][hit].append(int(0))
+						for read in taxonomy_count[tax_rank][hit]:
+							for per_sample in global_cluster_reads[read]:
+	                                                        if per_sample.startswith(sampleID+'|'):
+									global_taxa[tax_rank][hit][-1] += int(queries[per_sample.split("|")[0]]['cluster_counts'][per_sample.split("|")[1]])
+									global_clust[tax_rank][hit][-1] += int(1)
+									temp_cluster_id.append(per_sample.split("|")[-1])
+						if temp_cluster_id:
+							if args.extract_centroid_reads:
+								to_print = []
+								centroids = SeqIO.to_dict(SeqIO.parse(open(queries[sampleID]['queryfile']),'fasta'))
+								if not os.path.exists('./'+sampleID+'/centroids_per_taxon'):
+        								os.makedirs(sampleID+'/centroids_per_taxon')
+								for c in temp_cluster_id:
+									if centroids.has_key(c):
+										centroids[c].id = '%s|%s|%s|%.2f' %(sampleID, centroids[c].id, str(queries[sampleID]['cluster_counts'][c]), float(queries[sampleID]['cluster_counts'][c])/read_stats[sampleID]['queries']*100)
+										centroids[c].description = centroids[c].id
+										to_print.append(centroids[c])
+								if not hit == 'nohit':
+									OUT = open(sampleID+'/centroids_per_taxon/'+tax_dict[hit][2].replace(" ","_")+'.fasta', 'w')
+								else:
+									OUT = open(sampleID+'/centroids_per_taxon/unassigned.fasta', 'w')
+								SeqIO.write(to_print, OUT, 'fasta')
+								OUT.close()
+									
+									
+
+
+#		print global_taxa
+#		print global_clust
+
+		
+		index = 0
+		for sampleID in sorted(queries):
+						#if I wanted to extract the actual reads I think it would be best to parse_to_dict here: queries[queryID]['queryfile']	
+			if read_stats[sampleID]['queries']:
+				totall = read_stats[sampleID]['queries']
+				print "\n ### SAMPLE: %s (total number of valid queries: %i) ###" %(sampleID, totall)
+				for tax_rank in reversed(tax_dict['tax_id']):
+					if global_taxa.has_key(tax_rank):
+						per_rank = 0
+						for hit in global_taxa[tax_rank]:
+							per_rank += global_taxa[tax_rank][hit][index]
+						if per_rank > 0:
+							print "%s: %i (%.2f %%)" %(tax_rank, per_rank, float(per_rank)/read_stats[sampleID]['queries']*100)
+							for hit in global_taxa[tax_rank]:
+								if global_taxa[tax_rank][hit][index]:
+									if not hit == 'nohit':
+										print "\t%s: %i (%.2f %%)" %(tax_dict[hit][2], global_taxa[tax_rank][hit][index], float(global_taxa[tax_rank][hit][index])/read_stats[sampleID]['queries']*100)
+
+				index += 1
+
+
+
+                if tax_dict["tax_id"][0] == 'nohit':
+                	del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
+
+		os.chdir('../')
+                print '\n'+time.strftime("%c")+'\n'
+
+
+os.chdir('../')
+os.utime('GLOBAL', None)
+
+#This is under construction	
+
+
+if args.blast or args.phyloplace:
+
+	print "\n##### DONE PROCESSING ALL SAMPLES #####"		
+	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
+	clust_to_biom = []
+	data_to_biom = []
+	observ_ids=[]
+	for tax_rank in reversed(tax_dict["tax_id"]):
+		if global_taxa.has_key(tax_rank):
+#			print tax_rank
+#			print global_taxa[tax_rank]
+			for out in sorted(global_taxa[tax_rank]):
+#				print "%s: %s" %(out, global_taxa[tax_rank][out])
+				observ_ids.append(tax_dict[out][2])
+				data_to_biom.append(global_taxa[tax_rank][out])
+				clust_to_biom.append(global_clust[tax_rank][out])
+
+	#take care of nohits if any exist
+	if global_taxa.has_key('nohit'):
+		observ_ids.append('unassigned')
+		data_to_biom.append(global_taxa['nohit']['nohit'])
+		clust_to_biom.append(global_clust['nohit']['nohit'])
+
+	#print data_to_biom
+	data = np.asarray(data_to_biom)
+	clust_data = np.asarray(clust_to_biom)
+#	print "data:\n%s" %data
+#	print len(data)
+
+	sample_ids = []	
+	for key in sorted(queries.keys()):
+#		print key
+		for met in methods:
+#			print met
+			sample_ids.append(key+"."+met)
+#	print "sample_ids:\n%s" %sample_ids
+	#print len(sample_ids)
+
+	sample_metadata=[]
+	for q in sample_ids:
+		temp={}
+		temp['method'] = q.split(".")[-1]
+#		print queries[q]
+#		sample_metadata.append(queries[q])
+		if args.mock_meta_data:
+			r="%.1f" %random.uniform(20.0,25.0)
+			temp['temperature'] = "%.1f C" %float(r)
+			r="%.1f" %random.uniform(10.0,15.0)
+			temp['depth'] = "%.1f m" %float(r)
+			treatments = ['A','B']
+			temp['treatment'] = random.choice(treatments)
+
+		if args.metadata:
+			current = ".".join(q.split(".")[:-1])
+#			print current
+			if not metadata.has_key(current):
+				print "sample %s has no metadata available\n"
+			else:
+				for meta in metadata[current].keys():
+					temp[meta] = metadata[current][meta]
+		sample_metadata.append(temp)
+		
+#	print "sample_metadata:\n%s" %sample_metadata
+#	print len(sample_metadata)
+	
+#	print "observ_ids:\n%s" %observ_ids
+#	print len(observ_ids)
+
+	observation_metadata=[]
+
+	Taxonomy=defaultdict(dict)
+	syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
+	levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+	level_indices = []
+        for level in levels:
+        	for i in range(len(tax_dict['tax_id'])):
+                	if level == tax_dict['tax_id'][i]:
+                        	level_indices.append(i)
+
+	global_taxids_hit = list(set(global_taxids_hit))
+	for tid in global_taxids_hit:
+		ind_taxonomy=[]
+		if tax_dict.has_key(tid):
+			for i in range(len(levels)):
+				if tax_dict[tid][level_indices[i]]:
+					ind_taxonomy.append('%s%s' %(syn[levels[i]],tax_dict[tax_dict[tid][level_indices[i]]][2].replace(' ','_')))
+				else:
+					ind_taxonomy.append('%sunknown' %syn[levels[i]])
+		else:
+			"taxid %s has not been seen before\n" %tid
+
+		for j in reversed(range(len(levels))):
+			if '_unknown' in ind_taxonomy[j]:
+				del ind_taxonomy[j]
+
+		Taxonomy[tax_dict[tid][2]]['taxonomy'] = ind_taxonomy
+
+##	print Taxonomy
+
+	if observ_ids[-1] == 'unassigned':
+		ind_taxonomy = []
+		for lev in levels:
+			ind_taxonomy.append('%sunassigned' %syn[lev])
+
+		Taxonomy['unassigned']['taxonomy'] = ind_taxonomy
+
+	for taxon in observ_ids:
+#		print "%s: %s" %(taxon, Taxonomy[taxon])
+		observation_metadata.append(Taxonomy[taxon])
+	
+#	print "observation metadata:\n%s" %observation_metadata
+#	print len(observation_metadata)
+
+### double check all inputs for table
+#	print "data: %s" %data
+#	print len(data)
+#	print "cluster data: %s" %clust_data
+#	print len(clust_data)
+#	print "observed_ids: %s" %observ_ids
+#	print len(observ_ids)
+#	print "sample ids: %s" %sample_ids
+#	print len(sample_ids)
+#	print "observation metadata: %s" %observation_metadata
+#	print len(observation_metadata)
+#	print "sample_metadata: %s" %sample_metadata
+#	print len(sample_metadata)
+
+#	print "\n"
+
+	table = Table(data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Read count Table')
+	clust_table = Table(clust_data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Cluster count Table')
+
+
+#	print tables
+	out=open(args.output_prefix+".biom","w")
+	table.to_json('metaBEAT v.'+VERSION, direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+".tsv","w")
+	out.write(table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"_clusters.biom","w")
+	clust_table.to_json('metaBEAT v.'+VERSION, direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"_clusters.tsv","w")
+	out.write(clust_table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
+	out.close()
+print "\n##### DONE! #####\n"
+print '\n'+time.strftime("%c")+'\n'
+
+
+#print "remove read-pair id from extended reads. \n output overall run summary, i.e. per sample: raw reads, trimmed reads, merged reads, clusters, etc. \n make OTU table output standard"
+#
+#add functionality to iterate over parameters, e.g. cluster_coverage 10,20,30,40,50 and treat each as different sample in the biom file
+
+sys.exit()
+
+
+if args.blast or args.phyloplace or args.merge or args.cluster:
+        ##determine which methods will be applied
+        if args.blast:
+                methods.append('blast')
+        if args.phyloplace:
+                methods.append('pplacer')
+
+        for queryID in sorted(queries):
+	
 #		print "BEFORE BLAST"
 #		print cluster_counts
 #		print cluster_reads
@@ -1704,160 +2110,3 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 		os.chdir('../')	#leave directory for query
 
-
-
-if args.blast or args.phyloplace:
-
-	print "\n##### DONE PROCESSING ALL SAMPLES #####"		
-	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
-	clust_to_biom = []
-	data_to_biom = []
-	observ_ids=[]
-	for tax_rank in reversed(tax_dict["tax_id"]):
-		if global_taxa.has_key(tax_rank):
-#			print tax_rank
-#			print global_taxa[tax_rank]
-			for out in sorted(global_taxa[tax_rank]):
-#				print "%s: %s" %(out, global_taxa[tax_rank][out])
-				observ_ids.append(tax_dict[out][2])
-				data_to_biom.append(global_taxa[tax_rank][out])
-				clust_to_biom.append(global_clust[tax_rank][out])
-
-	#take care of nohits if any exist
-	if global_taxa.has_key('nohit'):
-		observ_ids.append('unassigned')
-		data_to_biom.append(global_taxa['nohit']['nohit'])
-		clust_to_biom.append(global_clust['nohit']['nohit'])
-
-	#print data_to_biom
-	data = np.asarray(data_to_biom)
-	clust_data = np.asarray(clust_to_biom)
-#	print "data:\n%s" %data
-#	print len(data)
-
-	sample_ids = []	
-	for key in sorted(queries.keys()):
-#		print key
-		for met in methods:
-#			print met
-			sample_ids.append(key+"."+met)
-#	print "sample_ids:\n%s" %sample_ids
-	#print len(sample_ids)
-
-	sample_metadata=[]
-	for q in sample_ids:
-		temp={}
-		temp['method'] = q.split(".")[-1]
-#		print queries[q]
-#		sample_metadata.append(queries[q])
-		if args.mock_meta_data:
-			r="%.1f" %random.uniform(20.0,25.0)
-			temp['temperature'] = "%.1f C" %float(r)
-			r="%.1f" %random.uniform(10.0,15.0)
-			temp['depth'] = "%.1f m" %float(r)
-			treatments = ['A','B']
-			temp['treatment'] = random.choice(treatments)
-
-		if args.metadata:
-			current = ".".join(q.split(".")[:-1])
-#			print current
-			if not metadata.has_key(current):
-				print "sample %s has no metadata available\n"
-			else:
-				for meta in metadata[current].keys():
-					temp[meta] = metadata[current][meta]
-		sample_metadata.append(temp)
-		
-#	print "sample_metadata:\n%s" %sample_metadata
-#	print len(sample_metadata)
-	
-#	print "observ_ids:\n%s" %observ_ids
-#	print len(observ_ids)
-
-	observation_metadata=[]
-
-	Taxonomy=defaultdict(dict)
-	syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
-	levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
-	level_indices = []
-        for level in levels:
-        	for i in range(len(tax_dict['tax_id'])):
-                	if level == tax_dict['tax_id'][i]:
-                        	level_indices.append(i)
-
-	global_taxids_hit = list(set(global_taxids_hit))
-	for tid in global_taxids_hit:
-		ind_taxonomy=[]
-		if tax_dict.has_key(tid):
-			for i in range(len(levels)):
-				if tax_dict[tid][level_indices[i]]:
-					ind_taxonomy.append('%s%s' %(syn[levels[i]],tax_dict[tax_dict[tid][level_indices[i]]][2].replace(' ','_')))
-				else:
-					ind_taxonomy.append('%sunknown' %syn[levels[i]])
-		else:
-			"taxid %s has not been seen before\n" %tid
-
-		for j in reversed(range(len(levels))):
-			if '_unknown' in ind_taxonomy[j]:
-				del ind_taxonomy[j]
-
-		Taxonomy[tax_dict[tid][2]]['taxonomy'] = ind_taxonomy
-
-##	print Taxonomy
-
-	if observ_ids[-1] == 'unassigned':
-		ind_taxonomy = []
-		for lev in levels:
-			ind_taxonomy.append('%sunassigned' %syn[lev])
-
-		Taxonomy['unassigned']['taxonomy'] = ind_taxonomy
-
-	for taxon in observ_ids:
-#		print "%s: %s" %(taxon, Taxonomy[taxon])
-		observation_metadata.append(Taxonomy[taxon])
-	
-#	print "observation metadata:\n%s" %observation_metadata
-#	print len(observation_metadata)
-
-### double check all inputs for table
-#	print "data: %s" %data
-#	print len(data)
-#	print "cluster data: %s" %clust_data
-#	print len(clust_data)
-#	print "observed_ids: %s" %observ_ids
-#	print len(observ_ids)
-#	print "sample ids: %s" %sample_ids
-#	print len(sample_ids)
-#	print "observation metadata: %s" %observation_metadata
-#	print len(observation_metadata)
-#	print "sample_metadata: %s" %sample_metadata
-#	print len(sample_metadata)
-
-#	print "\n"
-
-	table = Table(data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Read count Table')
-	clust_table = Table(clust_data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Cluster count Table')
-
-
-#	print tables
-	out=open(args.output_prefix+".biom","w")
-	table.to_json('metaBEAT v.'+VERSION, direct_io=out)
-	out.close()
-
-	out=open(args.output_prefix+".tsv","w")
-	out.write(table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
-	out.close()
-
-	out=open(args.output_prefix+"_clusters.biom","w")
-	clust_table.to_json('metaBEAT v.'+VERSION, direct_io=out)
-	out.close()
-
-	out=open(args.output_prefix+"_clusters.tsv","w")
-	out.write(clust_table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
-	out.close()
-print "\n##### DONE! #####\n"
-print '\n'+time.strftime("%c")+'\n'
-
-#print "remove read-pair id from extended reads. \n output overall run summary, i.e. per sample: raw reads, trimmed reads, merged reads, clusters, etc. \n make OTU table output standard"
-#
-#add functionality to iterate over parameters, e.g. cluster_coverage 10,20,30,40,50 and treat each as different sample in the biom file
