@@ -209,16 +209,19 @@ def check_email(mail):
 		mail = FH.readline().strip()
 		FH.close()
 		if not '@' in mail:
-			print "\nnot sure %s is an email address\n" %mail
+			print "\nnot sure %s is an email address - please make sure it's valid\n" %mail
 			sys.exit()
 		print "found '%s' in %s/user_email.txt\n" %(mail, os.path.dirname(sys.argv[0]))
 		
 	else:
+		if not '@' in mail:
+			print "\nnot sure %s is an email address\n" %mail
+			sys.exit()
 		print "You have specified: '%s'\n" %(mail)
 
-	FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','w')
-	FH.write(mail)
-	FH.close()
+		FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','w')
+		FH.write(mail)
+		FH.close()
 
 	return mail
 	
@@ -269,7 +272,7 @@ def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sample
 	    good_seqs.append(record)
 	    v_string = "%s - ok" %record.id
         else:
-	    v_string = "excluding %s from further analyses - cluster_size filter\n" %record.id
+	    v_string = "excluding %s from further analyses - cluster_size filter" %record.id
 	    bad_seqs.append(record)
 	    badcount += 1
 	if v:
@@ -522,6 +525,7 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
     result = {'format':''}
     count=0
     for res in b_result:
+	bit_score_cutoff = 0.9 #that's the default setting, i.e. top 10% of top bit score
         count += 1
         if v:
             print "\nquery: %s" % res.query #the current query
@@ -542,8 +546,14 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
         else: #if a hit has been found
 	    if not result.has_key('hit'):
 		result['hit'] = {}
-            
+
+            if (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) == 1): #if we have a full length 100 % match adjust the bitscore so window so that only this hit is considered
+		bit_score_cutoff = 1
+		if v:
+			print "\nFull length match:\n"
+			print "Query length: %s\nnumber of identitites: %s" %(str(len(res.alignments[0].hsps[0].query)), str(res.alignments[0].hsps[0].identities))
             max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
+
             result['hit'][res.query]=[] #create empty list for query
             for alignment in res.alignments: #for each hit of the current query
 #                print alignment.hsps[0].bits
@@ -553,7 +563,7 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
                     else:
                         result['format']='taxid'
                         
-                if alignment.hsps[0].bits > (max_bit_score*0.9): #if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
+                if alignment.hsps[0].bits >= (max_bit_score*bit_score_cutoff): #if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
 #                    print alignment.title.split("|")[1]
 		    if result['format'] == 'gi':
                         result['hit'][res.query].append(alignment.title.split("|")[1])
@@ -1349,7 +1359,6 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 			cluster_reads = defaultdict(list)
 			parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
 			
-
 #			total_queries = querycount[queryID]
 			total_clusters = len(cluster_counts)
 			
@@ -1393,7 +1402,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 				cluster_reads[unknown_seqs_dict[ID].description] = [unknown_seqs_dict[ID].description]
 #				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
 				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-				print unknown_seqs_dict[ID]
+#				print unknown_seqs_dict[ID]
 			read_stats[queryID]['queries'] = querycount[queryID]
 
 
