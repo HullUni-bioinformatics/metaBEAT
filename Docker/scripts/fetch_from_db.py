@@ -12,25 +12,10 @@ from Bio.SeqFeature import FeatureLocation
 import urllib
 import time
 from Bio.Alphabet import generic_dna
-#from os import remove
-
-#from Bio.SeqRecord import SeqRecord
-#from Bio.Blast.Applications import NcbiblastxCommandline
-#from Bio.Blast import NCBIXML
-#import numpy as np
-#from biom.table import Table
-#import random
-#import json
-#import gzip
-#from itertools import product
-
-#import re
-#from argparse import RawTextHelpFormatter
-#from collections import defaultdict
 
 ### define variables
-VERSION = '0.1'
-Entrez.email = "c.hahn@hull.ac.uk"
+VERSION = '0.2'
+Entrez.email = ""
 date = time.strftime("%d-%b-%Y").upper()
 geo_syn = {'Europe':["Albania","Andorra","Armenia","Austria","Azerbaijan","Belarus","Belgium","Bosnia and Herzegovina","Bulgaria","Croatia","Cyprus","Czech Republic","Denmark","Estonia","Finland","France","Georgia","Germany","Greece","Hungary","Iceland","Ireland","Italy","Kazakhstan","Kosovo","Latvia","Liechtenstein","Lithuania","Luxembourg","Macedonia","Malta","Moldova","Monaco","Montenegro","Netherlands","Norway","Poland","Portugal","Romania","Russia","San Marino","Serbia","Slovakia","Slovenia","Spain","Sweden","Switzerland","Turkey","Ukraine","United Kingdom"]}
 marker_syn = {'COI':['MT-CO1','cox1','COX1','COI','coi','cytochome oxidase 1','cytochome oxidase I',
@@ -47,7 +32,7 @@ marker_syn = {'COI':['MT-CO1','cox1','COX1','COI','coi','cytochome oxidase 1','c
              'ATP6':['MT-ATP6','atp6','ATP6','atpase6','atpase 6','ATPase6','ATPASE6'],
              'ATP8':['MT-ATP8','atp8','ATP8','atpase8','atpase 8','ATPase8','ATPASE8'],
              'ATP9':['ATP9','atp9'],
-             'CYB':['MT-CYB','cytochrome-b','cytb','CYTB','Cytb', 'cytochrome B','cytochrome b'],
+             'CYB':['CYB','MT-CYB','cytochrome-b','cytb','CYTB','Cytb', 'cytochrome B','cytochrome b'],
              'ef1a':['ef1a','Ef1a', 'elongation factor 1-alpha','elongation factor-1 alpha',
              'ef1-alpha','elongation factor 1 alpha'],
              'ND1':['MT-ND1','nd1','ND1','nadh1','NADH1','nadh 1','NADH 1',
@@ -64,11 +49,12 @@ marker_syn = {'COI':['MT-CO1','cox1','COX1','COI','coi','cytochome oxidase 1','c
              'NADH dehydrogenase subunit V'],
              'ND6':['MT-ND6','nd6','ND6','nad6','nadh6','NADH6','nadh 6','NADH 6','NADH dehydrogenase subunit 6',
              'NADH dehydrogenase subunit VI'],
-             '12S':['rrnS','12srRNA','12s rRNA','12S ribosomal RNA','12S rRNA'],
-             '16S':['rrnL','16srRNA','16s rRNA','16S ribosomal RNA','16S rRNA'],
+             '12S':['12S','rrnS','12srRNA','12s rRNA','12S ribosomal RNA','12S rRNA'],
+             '16S':['16S','rrnL','16srRNA','16s rRNA','16S ribosomal RNA','16S rRNA'],
              'C_mos':['C_mos', 'C-mos','c-mos','C-MOS'],
              'GAPDH':['GAPDH','gapdh'],
              'RNApol2':['RNApol2','RNApolII','RNA polymerase II']}
+non_gene = ['12S', '16S', '18S', '28S']
 genes=[]
 gene_search_term = ''
 taxids = []
@@ -84,9 +70,50 @@ def get_accession(record):
 	accession = record.name
 	return accession
 	
+def check_email(mail):
+        """
+        The function checks that you provide an email address to Entrez
+        """
+	
+	from datetime import datetime
+
+        print "\nmetaBEAT may be querying NCBI's Entrez databases to fetch/verify taxonomic ids. Entrez User requirements state that you need to identify yourself by providing an email address so that NCBI can contact you in case there is a problem.\n"
+
+
+        if not mail:
+                print "As the mail address is not specified in the script itself (variable 'Entrez.email'), metaBEAT expects a simple text file called 'user_email.txt' that contains your email address (first line of file) in the same location as the metaBEAT.py script (in your case: %s/)\n" %os.path.dirname(sys.argv[0])
+                if not os.path.isfile(os.path.dirname(sys.argv[0])+'/user_email.txt'):
+                        print "Did not find the file %s/user_email.txt - you may specify your email address also via the '-@' command line option\n" %os.path.dirname(sys.argv[0])
+                        sys.exit()
+                now = datetime.today()
+                modify_date = datetime.fromtimestamp(os.path.getmtime(os.path.dirname(sys.argv[0])+'/user_email.txt'))
+                if (now-modify_date).days > 7:
+                        print "%s/user_email.txt is older than 7 days - Please make sure it's up to date or specify email address via the '-@' option\n" %os.path.dirname(sys.argv[0])
+                        sys.exit()
+                FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','r')
+                mail = FH.readline().strip()
+                FH.close()
+                if not '@' in mail:
+                        print "\nnot sure %s is an email address - please make sure it's valid\n" %mail
+                        sys.exit()
+                print "found '%s' in %s/user_email.txt\n" %(mail, os.path.dirname(sys.argv[0]))
+
+        else:
+                if not '@' in mail:
+                        print "\nnot sure %s is an email address - please make sure it's valid\n" %mail
+                        sys.exit()
+                print "You have specified: '%s'\n" %(mail)
+
+                FH = open(os.path.dirname(sys.argv[0])+'/user_email.txt','w')
+                FH.write(mail)
+                FH.close()
+
+        return mail
+
+
 
 ##########
-parser = argparse.ArgumentParser(description='Fetch all available DNA sequences for a list of taxa and a given marker gene', prog='fetch_from_genbank.py')
+parser = argparse.ArgumentParser(description='Fetch all available DNA sequences for a list of taxa and a given marker gene', prog='fetch_from_db.py')
 
 parser.add_argument("-t", "--taxlist", help="text file containing list of taxa to search for on Genbank", metavar="<FILE>", action="store")
 parser.add_argument("-m", "--marker", help="name of gene to be searched for (put in \"\" if the search term consists of more than one word", metavar="<string>", action="store")
@@ -94,6 +121,7 @@ parser.add_argument("-G","--Genbank", help="search Genbank", action="store_true"
 parser.add_argument("-B","--BOLD", help="search BOLD", action="store_true")
 parser.add_argument("--geo", help="limit BOLD search to countries/continents. for more than one write as follows: \"Austria|UK\"", metavar="<string>", action="store")
 parser.add_argument("-o","--out", help="prefix for output files (default=\"out\")", metavar="<string>", action="store", default="out")
+parser.add_argument("-@", "--email", help='provide your email address for identification to NCBI', metavar='<email-address>', action="store", default="")
 
 parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
 args = parser.parse_args()
@@ -102,6 +130,10 @@ args = parser.parse_args()
 if len(sys.argv) < 2:   #if the script is called without any arguments display the usage
 	parser.print_usage()
 	sys.exit(1)
+
+if args.email:
+	Entrez.email = args.email
+Entrez.email = check_email(mail = Entrez.email)
 
 if not args.Genbank and not args.BOLD:
 	print "\nPlease specify a database to be searched\n"
@@ -119,11 +151,13 @@ if args.Genbank:
 	else:
 		print "check for synonyms for \"%s\" (this is relevant only for Genbank searches)" %args.marker
 		for g in marker_syn.keys():
+#			print "checking %s" %g
 			if args.marker in marker_syn[g]:
-#				print "%s: %s" %(g, marker_syn[g])
-#				genes.append(g)
-				gene_search_term = " AND ((%s[gene]))" %"[gene]) OR (".join(marker_syn[g])
-#				print gene_search_term
+#				print "found: %s: %s" %(g, marker_syn[g])
+				if g in non_gene:
+					gene_search_term = " AND ((%s))" %") OR (".join(marker_syn[g])
+				else:
+					gene_search_term = " AND ((%s[gene]))" %"[gene]) OR (".join(marker_syn[g])
 				break
 
 		if not gene_search_term:
@@ -132,7 +166,7 @@ if args.Genbank:
 	print "\nfetching accessions ..\n"
 	for tax in taxa:
 		search = "("+tax+"[orgn])"+gene_search_term
-#		print search
+		print search
 		handle = Entrez.esearch(db='nuccore', term=search, retmax=10000)
 		records = Entrez.read(handle)
 #		print records.keys()
