@@ -14,18 +14,18 @@ import time
 from Bio.Alphabet import generic_dna
 
 ### define variables
-VERSION = '0.2'
+VERSION = '0.3'
 Entrez.email = ""
 date = time.strftime("%d-%b-%Y").upper()
 geo_syn = {'Europe':["Albania","Andorra","Armenia","Austria","Azerbaijan","Belarus","Belgium","Bosnia and Herzegovina","Bulgaria","Croatia","Cyprus","Czech Republic","Denmark","Estonia","Finland","France","Georgia","Germany","Greece","Hungary","Iceland","Ireland","Italy","Kazakhstan","Kosovo","Latvia","Liechtenstein","Lithuania","Luxembourg","Macedonia","Malta","Moldova","Monaco","Montenegro","Netherlands","Norway","Poland","Portugal","Romania","Russia","San Marino","Serbia","Slovakia","Slovenia","Spain","Sweden","Switzerland","Turkey","Ukraine","United Kingdom"]}
-marker_syn = {'COI':['MT-CO1','cox1','COX1','COI','coi','cytochome oxidase 1','cytochome oxidase I',
-             'cytochome oxidase subunit 1','cytochome oxidase subunit I',
+marker_syn = {'COI':['MT-CO1','cox1','COX1','COI','coi','cytochrome oxidase 1','cytochrome oxidase I',
+             'cytochrome oxidase subunit 1','cytochrome oxidase subunit I',
              'cox I','coxI', 'cytochrome c oxidase subunit I'],
-             'COII':['MT-CO2','cox2','COX2','COII','coii','cytochome oxidase 2','cytochome oxidase II',
-             'cytochome oxidase subunit 2','cytochome oxidase subunit II','cox II',
+             'COII':['MT-CO2','cox2','COX2','COII','coii','cytochrome oxidase 2','cytochrome oxidase II',
+             'cytochrome oxidase subunit 2','cytochrome oxidase subunit II','cox II',
              'cytochrome c oxidase subunit II'],
-             'COIII':['MT-CO3','cox3','COX3','COIII','coiii','cytochome oxidase 3',
-             'cytochome oxidase III','cytochome oxidase subunit 3','cytochome oxidase subunit III'
+             'COIII':['MT-CO3','cox3','COX3','COIII','coiii','cytochrome oxidase 3',
+             'cytochrome oxidase III','cytochrome oxidase subunit 3','cytochrome oxidase subunit III'
              ,'cox III','cytochrome c oxidase subunit III'],
              '18S':['18s','18S','SSU rRNA','18S ribosomal RNA','small subunit 18S ribosomal RNA', '18S rRNA'],
              '28S':['28s','28S','LSU rRNA','28S ribosomal RNA','28S large subunit ribosomal RNA'],
@@ -58,7 +58,7 @@ non_gene = ['12S', '16S', '18S', '28S']
 genes=[]
 gene_search_term = ''
 taxids = []
-search_taxa = {}
+#search_taxa = {}
 record_dict = {}
 batch_size=1000
 BOLD_records = []
@@ -146,6 +146,7 @@ if args.taxlist:
 #	print taxa
 
 if args.Genbank:
+	print "\nQUERYING GENBANK\n"
 	if not args.marker:
 		print "no marker specified - will fetch all available sequences for the desired taxa"
 	else:
@@ -166,7 +167,7 @@ if args.Genbank:
 	print "\nfetching accessions ..\n"
 	for tax in taxa:
 		search = "("+tax+"[orgn])"+gene_search_term
-		print search
+#		print search
 		handle = Entrez.esearch(db='nuccore', term=search, retmax=10000)
 		records = Entrez.read(handle)
 #		print records.keys()
@@ -177,25 +178,31 @@ if args.Genbank:
 #		search_taxa[tax]=records['Count']
 		taxids.extend(records['IdList'])
 #		print "total: %s" %len(taxids)
-		search_taxa[tax]={'Genbank': records['IdList']}
+#		search_taxa[tax]={'Genbank': records['IdList']}
 
 #	print "\ntotal: %s\n" %len(taxids)
-	print "\ntotal number of accessions fetched: %s\n" %len(list(set(taxids)))
+
+	taxids = list(set(taxids))	
+#	print "\ntotal number of accessions fetched: %s\n" %len(list(set(taxids)))
+	print "\ntotal number of accessions fetched: %s\n" %len(taxids)
 #	print search_taxa
 
 	#now download the records
-	print "\ndownloading the records .. %s records per batch\n" %batch_size
-	for start in range(0,len(list(set(taxids))),batch_size):
-		end = min(len(list(set(taxids))), start+batch_size)
-		handle = Entrez.efetch(db='nuccore', id=sorted(list(set(taxids)))[start:end], rettype='gb',retmax=batch_size)
-		batch_record_dict = SeqIO.to_dict(SeqIO.parse(handle,'gb'), key_function=get_accession)
-#		print len(batch_record_dict)
-		record_dict.update(batch_record_dict)
-#		print len(record_dict)
-		print "%s records downloaded" %end
-	
+	print "\ndownloading the records .. processing %s accessions per batch\n" %batch_size
+#	for start in range(0,len(list(set(taxids))),batch_size):
+	for start in range(0,len(taxids),batch_size):
+#		end = min(len(list(set(taxids))), start+batch_size)
+		end = min(len(taxids), start+batch_size)
+#		handle = Entrez.efetch(db='nuccore', id=sorted(list(set(taxids)))[start:end], rettype='gb',retmax=batch_size)
+		handle = Entrez.efetch(db='nuccore', id=taxids[start:end], rettype='gb',retmax=batch_size)
+		recs=SeqIO.parse(handle,'gb')
+		for rec in recs:
+			if not rec.id in record_dict.keys():
+				record_dict[rec.id]=rec
+		print "dowloaded\t%i unique records" %len(record_dict)	
 
 if args.BOLD:
+	print "\nQUERYING BOLD - atm experimental\n"
 	if args.geo:
 		if geo_syn.has_key(args.geo):
 			geo_search ='&geo='+"|".join(geo_syn[args.geo])
@@ -213,6 +220,7 @@ if args.BOLD:
 		BOLD_records.extend(temp_BOLD_records)
 		os.remove('temp.fasta')
 
+	print "\nquerying NCBI for taxonomic ids (taxids) associated with the BOLD records\n"
 	for rec in BOLD_records:
 #		print "%s (%s)" %(rec.description, len(rec.description.split("|")))
 		if len(rec.description.split("|"))==4: #if four elements exist then there is a valid genbank accession.
@@ -244,7 +252,7 @@ if args.BOLD:
 #						print "found %s" %taxon['IdList']
 						pass
 					else:
-						print "NO VALID TAXID FOUND - WHAT TO DO NOW?"		
+						print "NO VALID TAXID FOUND - WHAT TO DO NOW? %s" %rec.features[0].qualifiers['organism'][0]		
 
 			elif len(rec.features[0].qualifiers['organism'][0].split(" ")) == 1:
 				rec.features[0].qualifiers['organism'] = [rec.features[0].qualifiers['organism'][0]+" sp."]
@@ -255,7 +263,7 @@ if args.BOLD:
 					pass
 #					print "found %s" %taxon['IdList']
 				else:
-					print "NO VALID TAXID FOUND - WHAT TO DO NOW?"		
+					print "NO VALID TAXID FOUND - WHAT TO DO NOW? %s" %rec.features[0].qualifiers['organism'][0]		
 			
 #			print rec
 #			print rec.features[0]
@@ -263,21 +271,25 @@ if args.BOLD:
 
 	print "total: %s" %len(BOLD_records)
 	gb_accessions = list(set(gb_accessions))
-	print "with genbiank accession: %s" %len(gb_accessions)
+	print "with genbank accession: %s" %len(gb_accessions)
 
 	for i in reversed(range(len(gb_accessions))):	#remove any accessions from the list that are already in the dictionary
 		if record_dict.has_key(gb_accessions[i]):
 			del gb_accession[i]
 
 	print "\ndownloading %s novel records from Genbank.. %s records per batch\n" %(len(list(set(gb_accessions))), batch_size)
+	
+
 	for start in range(0,len(gb_accessions),batch_size):
-		end = min(len(gb_accessions), start+batch_size)
-		handle = Entrez.efetch(db='nuccore', id=gb_accessions[start:end], rettype='gb',retmax=batch_size)
-		batch_record_dict = SeqIO.to_dict(SeqIO.parse(handle,'gb'), key_function=get_accession)
-#		print len(batch_record_dict)
-		record_dict.update(batch_record_dict)
-#		print len(record_dict)
-		print "%s records downloaded from Genbank" %end
+#		end = min(len(list(set(taxids))), start+batch_size)
+		end = min(len(taxids), start+batch_size)
+#		handle = Entrez.efetch(db='nuccore', id=sorted(list(set(taxids)))[start:end], rettype='gb',retmax=batch_size)
+		handle = Entrez.efetch(db='nuccore', id=gb_accesssions[start:end], rettype='gb',retmax=batch_size)
+		recs=SeqIO.parse(handle,'gb')
+		for rec in recs:
+			if not rec.id in record_dict.keys():
+				record_dict[rec.id]=rec
+		print "dowloaded\t%i unique records" %len(record_dict)	
 
 
 #print record_dict

@@ -278,18 +278,14 @@ if args.BOLD:
 			del gb_accession[i]
 
 	print "\ndownloading %s novel records from Genbank.. %s records per batch\n" %(len(list(set(gb_accessions))), batch_size)
-	
-
 	for start in range(0,len(gb_accessions),batch_size):
-#		end = min(len(list(set(taxids))), start+batch_size)
-		end = min(len(taxids), start+batch_size)
-#		handle = Entrez.efetch(db='nuccore', id=sorted(list(set(taxids)))[start:end], rettype='gb',retmax=batch_size)
-		handle = Entrez.efetch(db='nuccore', id=gb_accesssions[start:end], rettype='gb',retmax=batch_size)
-		recs=SeqIO.parse(handle,'gb')
-		for rec in recs:
-			if not rec.id in record_dict.keys():
-				record_dict[rec.id]=rec
-		print "dowloaded\t%i unique records" %len(record_dict)	
+		end = min(len(gb_accessions), start+batch_size)
+		handle = Entrez.efetch(db='nuccore', id=gb_accessions[start:end], rettype='gb',retmax=batch_size)
+		batch_record_dict = SeqIO.to_dict(SeqIO.parse(handle,'gb'), key_function=get_accession)
+#		print len(batch_record_dict)
+		record_dict.update(batch_record_dict)
+#		print len(record_dict)
+		print "%s records downloaded from Genbank" %end
 
 
 #print record_dict
