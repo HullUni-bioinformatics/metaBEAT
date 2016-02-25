@@ -85,6 +85,7 @@ query_group = parser.add_argument_group('Query preprocessing', 'The parameters i
 query_group.add_argument("--PCR_primer", help='PCR primers (provided in fasta file) to be clipped from reads', metavar="<FILE>", action="store")
 query_group.add_argument("--trim_adapter", help="trim adapters provided in file", metavar="<FILE>", action="store")
 query_group.add_argument("--trim_qual", help="minimum phred quality score (default: 30)", metavar="<INT>", type=int, action="store", default=30)
+query_group.add_argument("--phred", help="phred quality score offset - 33 or 64 (default: 33)", metavar="<INT>", type=int, action="store", default=33)
 query_group.add_argument("--trim_window", help="sliding window size (default: 5) for trimming; if average quality drops below the specified minimum quality all subsequent bases are removed from the reads", metavar="<INT>", type=int, action="store", default=5)
 query_group.add_argument("--trim_minlength", help="minimum length of reads to be retained after trimming (default: 50)", metavar="<INT>", type=int, action="store", default=50)
 query_group.add_argument("--merge", help="attempt to merge paired-end reads", action="store_true")
@@ -92,7 +93,7 @@ query_group.add_argument("--product_length", help="estimated length of PCR produ
 query_group.add_argument("--merged_only", help="only process successfully merged read-pairs", action="store_true")
 query_group.add_argument("--forward_only", help="only process sequences that contain forward reads (i.e. unmerged forward reads and merged reads)", action="store_true")
 query_group.add_argument("--length_filter", help="only process reads, which are within +/- 10 percent of this length", metavar="<INT>", type=int, action="store")
-query_group.add_argument("--phred", help="phred quality score offset - 33 or 64 (default: 33)", metavar="<INT>", type=int, action="store", default=33)
+query_group.add_argument("--length_deviation", help="allowed deviation (in percent) from length specified by --length_filter (default=0.1)", metavar="<FLOAT>", type=float, action="store", default=0.1)
 reference_group = parser.add_argument_group('Reference', 'The parameters in this group affect the reference to be used in the analyses')
 reference_group.add_argument("-R", "--REFlist", help="file containing a list of files to be used as reference sequences", metavar="<FILE>", action="store")
 reference_group.add_argument("--gb_out", help="output the corrected gb file", metavar="<FILE>", action="store", default="")
@@ -129,7 +130,7 @@ if len(sys.argv) < 2:	#if the script is called without any arguments display the
 
 ###FUNCTIONS
 
-def concat_and_filter_by_length(inlist, outfile, excludefile, form='fasta', length=0):
+def concat_and_filter_by_length(inlist, outfile, excludefile, form='fasta', length=0, devi=0.1):
 	"""
 	The Function concatenates sequences from a list of files into a single file and
 	 applies a length filter if specified
@@ -151,7 +152,7 @@ def concat_and_filter_by_length(inlist, outfile, excludefile, form='fasta', leng
     		
 		for record in SeqIO.parse(IN,'fastq'):
 			if length:
-                		if len(record.seq) < length*0.9 or len(record.seq) > length*1.1:
+                		if len(record.seq) < length*(1-devi) or len(record.seq) > length*(1+devi):
 					record.id += '|length_filtered'
 					record.description = record.id
 					exclude.append(record)
@@ -1272,7 +1273,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 					print "\nkeeping only forward sequences (non merged forward and merged reads) for subsequent analyses"
 					keep_only(inlist=trimmed_files, pattern_list=['.extendedFrags.fastq.gz', '_forward', 'notCombined_1'])
 			
-				survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=queryID+'_excluded.fasta', form='fasta', length=args.length_filter)
+				survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=queryID+'_excluded.fasta', form='fasta', length=args.length_filter, devi=args.length_deviation)
 				print "\n%i sequences survived filtering\n" %survived
 #				sys.exit()
 
