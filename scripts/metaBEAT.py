@@ -107,6 +107,7 @@ cluster_group.add_argument("--clust_cov", help="minimum number of records in clu
 blast_group = parser.add_argument_group('BLAST search', 'The parameters in this group affect BLAST search and BLAST based taxonomic assignment')
 blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.80)", type=float, metavar="<FLOAT>", action="store", default="0.80")
+blast_group.add_argument("--min_ali_length", help="minimum alignment length in percent of total query length (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
 phyloplace_group = parser.add_argument_group('Phylogenetic placement', 'The parameters in this group affect phylogenetic placement')
 phyloplace_group.add_argument("--refpkg", help="PATH to refpkg", metavar="<DIR>", action="store")
@@ -521,7 +522,7 @@ def gi_to_taxid(b_filtered, all_taxids, processed, v=0):
     return all_taxids
 
 
-def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
+def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95):
     "The function interprets a BLAST results handle and filters results subsequent taxonomic assignment using LCA"
     result = {'format':''}
     count=0
@@ -530,13 +531,20 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
         count += 1
         if v:
             print "\nquery: %s" % res.query #the current query
+	    print "query_length: %s" %str(res.query_length)
         if not res.alignments:  #if no alignment was found for the query
             if v:
                 print "no hit - done"
 	    if not result.has_key('nohit'):
 		result['nohit'] = []
             result['nohit'].append(res.query)
-            
+
+	elif (len(res.alignments[0].hsps[0].query) < res.query_length*m_ali_length):
+		if v:
+			print "alignment length (%i) below threshold (%i * %s -> %i)" %(len(res.alignments[0].hsps[0].query), res.query_length, m_ali_length, (res.query_length*m_ali_length))              
+	    	if not result.has_key('nohit'):
+			result['nohit'] = []
+           	result['nohit'].append(res.query)
         elif (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) < m_ident) or res.alignments[0].hsps[0].bits < m_bitscore:
             if v:
                 print "no significant hit - done"
@@ -655,6 +663,9 @@ if args.product_length:
 else:
 	args.product_length = ''
 
+if (args.min_ali_length > 1 or args.min_ali_length < 0) or (args.min_ident > 1 or args.min_ident < 0):
+	print "\nThe options --min_ali_length and --min_ident expect values between 0 and 1.\n"
+	sys.exit()
 
 if args.REFlist and args.blast_db:
 	print "\nPlease provide either a set of custom reference sequences OR a precompiled BLAST database\n"
@@ -1546,7 +1557,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 				print "get top 10% hits from blast output .. ",
 				res_dict = {}
-				res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit)
+				res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit, m_ali_length=args.min_ali_length)
 
 				if res_dict['format'] == 'gi':
 					print '\n'+time.strftime("%c")+'\n'
