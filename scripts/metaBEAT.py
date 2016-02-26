@@ -559,8 +559,8 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95):
             if (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) == 1): #if we have a full length 100 % match adjust the bitscore so window so that only this hit is considered
 		bit_score_cutoff = 1
 		if v:
-			print "\nFull length match:\n"
-			print "Query length: %s\nnumber of identitites: %s" %(str(len(res.alignments[0].hsps[0].query)), str(res.alignments[0].hsps[0].identities))
+			print "\n100% match:\n"
+			print "Query length: %i\nAlignment length: %s\nnumber of identitites: %s" %(res.query_length, str(len(res.alignments[0].hsps[0].query)), str(res.alignments[0].hsps[0].identities))
             max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
 
             result['hit'][res.query]=[] #create empty list for query
@@ -1031,7 +1031,7 @@ if args.blast:
 
 
 #start read stats output
-read_counts_out = open("reads_stats.csv","w")
+read_counts_out = open(args.output_prefix+"_read_stats.csv","w")
 outstring = "sample,"+",".join(read_metrics)
 read_counts_out.write(outstring+"\n")
 read_counts_out.close()
@@ -1419,7 +1419,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 
 		print "WRITING BASIC READ STATS TO FILE\n"
-		read_counts_out = open("../reads_stats.csv","a")
+		read_counts_out = open("../"+args.output_prefix+"_read_stats.csv","a")
 		outstring = queryID
 		for m in read_metrics:
 			if read_stats[queryID].has_key(m):
