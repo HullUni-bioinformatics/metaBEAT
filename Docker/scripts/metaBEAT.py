@@ -333,7 +333,7 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     "The function takes a dictionary of queries and their hits"
     "and provides taxonomic assignment based on the LCA method."
     tax_count = defaultdict(dict)
-
+    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
 #    print len(b_filtered['hit'])
     if b_filtered.has_key('hit'):
 	    for query in b_filtered['hit'].keys():
@@ -369,13 +369,28 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 #	                        print "ok - all have valid taxid"
 
 	                        if len(set(id_list)) == 1:
-				    if v:
-		                            print "found LCA %s at level %s" %(id_list[0], tax_dict["tax_id"][index])
-#	                            print tax_dict[id_list[0]][1]
-#	                            print tax_dict[id_list[0]][2]
-	                            if not tax_count[tax_dict["tax_id"][index]].has_key(id_list[0]):
-	                                tax_count[tax_dict["tax_id"][index]][id_list[0]] = []
- 	                            tax_count[tax_dict["tax_id"][index]][id_list[0]].append(query)
+				    LCA_taxid=""
+#				    print "found LCA %s at level %s" %(id_list[0], tax_dict["tax_id"][index])
+				    ok=0
+				    while not ok:
+					if tax_dict["tax_id"][index] in levels:
+					    if tax_dict[id_list[0]][index]:
+						LCA_taxid = tax_dict[id_list[0]][index]
+					    	ok=1
+					    	if v:
+#							print "assigned LCA %s (taxid %s) at level %s" %(tax_dict[id_list[0]][2], id_list[0], tax_dict["tax_id"][index])
+							print "assigned LCA %s (taxid %s) at level %s" %(tax_dict[LCA_taxid][2], LCA_taxid, tax_dict["tax_id"][index])
+					    else:
+						break
+					else:
+					    index-=1
+#					    if v:
+#						print "assignment to level %s (taxid %s) is not acceptable" %(tax_dict["tax_id"][index], tax_dict[id_list[0]][index])
+##	                            print tax_dict[id_list[0]][1]
+##	                            print tax_dict[id_list[0]][2]
+	                            if not tax_count[tax_dict["tax_id"][index]].has_key(LCA_taxid):
+	                                tax_count[tax_dict["tax_id"][index]][LCA_taxid] = []
+ 	                            tax_count[tax_dict["tax_id"][index]][LCA_taxid].append(query)
 	                            del b_filtered['hit'][query]
 	                            break
 #	                        else:
@@ -1734,10 +1749,11 @@ if args.blast or args.phyloplace:
 	clust_to_biom = []
 	data_to_biom = []
 	observ_ids=[]
+#	print "tax_dict:\n%s" %tax_dict
 	for tax_rank in reversed(tax_dict["tax_id"]):
 		if global_taxa.has_key(tax_rank):
-#			print tax_rank
-#			print global_taxa[tax_rank]
+#			print "tax_rank: %s" %tax_rank
+#			print "taxa: %s" %global_taxa[tax_rank]
 			for out in sorted(global_taxa[tax_rank]):
 #				print "%s: %s" %(out, global_taxa[tax_rank][out])
 				observ_ids.append(tax_dict[out][2])
@@ -1845,8 +1861,9 @@ if args.blast or args.phyloplace:
 #	print len(data)
 #	print "cluster data: %s" %clust_data
 #	print len(clust_data)
-#	print "observed_ids: %s" %observ_ids
+#	print "observed_ids: %s" %sorted(observ_ids)
 #	print len(observ_ids)
+#	print "non redundant: %i" %len(list(set(observ_ids)))
 #	print "sample ids: %s" %sample_ids
 #	print len(sample_ids)
 #	print "observation metadata: %s" %observation_metadata
