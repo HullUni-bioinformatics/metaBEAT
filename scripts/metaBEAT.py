@@ -554,7 +554,7 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95):
 		result['nohit'] = []
             result['nohit'].append(res.query)
 
-	elif (len(res.alignments[0].hsps[0].query) < res.query_length*m_ali_length):
+	elif (len(res.alignments[0].hsps[0].query) < int(res.query_length*m_ali_length)):
 		if v:
 			print "alignment length (%i) below threshold (%i * %s -> %i)" %(len(res.alignments[0].hsps[0].query), res.query_length, m_ali_length, (res.query_length*m_ali_length))              
 	    	if not result.has_key('nohit'):
