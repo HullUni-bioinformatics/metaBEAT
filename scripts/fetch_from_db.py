@@ -18,7 +18,17 @@ VERSION = '0.3'
 Entrez.email = ""
 date = time.strftime("%d-%b-%Y").upper()
 geo_syn = {'Europe':["Albania","Andorra","Armenia","Austria","Azerbaijan","Belarus","Belgium","Bosnia and Herzegovina","Bulgaria","Croatia","Cyprus","Czech Republic","Denmark","Estonia","Finland","France","Georgia","Germany","Greece","Hungary","Iceland","Ireland","Italy","Kazakhstan","Kosovo","Latvia","Liechtenstein","Lithuania","Luxembourg","Macedonia","Malta","Moldova","Monaco","Montenegro","Netherlands","Norway","Poland","Portugal","Romania","Russia","San Marino","Serbia","Slovakia","Slovenia","Spain","Sweden","Switzerland","Turkey","Ukraine","United Kingdom"]}
-marker_syn = {'COI':['MT-CO1','cox1','COX1','COI','coi','cytochrome oxidase 1','cytochrome oxidase I',
+marker_syn = {'rbcl':['rbcl', 'rbc-l', 'rbcL', 'RbcL', 'RBCl', 'RBCL', 'ribulose 1,5-biphosphate carboxylase large subunit',
+	     'ribulose-1,5-biphosphate carboxylase/oxygenase large subunit', 'ribulose-1,5-bisphophate carboxylase oxygenase',
+	     'ribulose-1, 5-bisphosphate carboxulase/oxygenase large subunit', 'ribulose-1,5-bisphosphate carboxylase',
+	     'ribulose 1,5-bisphosphate carboxylase large', 'ribulose 1,5 bisphosphate carboxylase/oxygenase', 'ribulose-1, 5-bisphosphate carboxylase/oxygenase',
+	     'ribulose-1,5-bisphosphate carboxylase/oxygenase', 'ribulose-1,5-bisphosphate carboxylase/oxygenase arge subunit',
+	     'ribulose 1,5-bisphosphate carboxylase oxygenase large subunit', 'ribulose 1,5-bisphosphate carboxylase/oxygenase large subunit',
+	     'ribulose-1,5 bis-phosphate carboxylase/oxygenase large subunit', 'ribulose-1,5-bisphosphate carboxylase/oxygenase large subunit',
+	     'ribulose-1,5-bisphosphatecarboxylase/oxygenase large subunit', 'Ribulose-1,5-bisphosphate carboxylase/oxygenase large subunit',
+	     'ribulose 1,5-bisphosphate carboxylase/oxygenase large subunit', 'Rubisco', 'ribulose bisphosphate carboxylase large chain',
+	     'ribulose-bisphosphate carboxylase large subunit', 'rubisco large subunit'],
+	     'COI':['MT-CO1','cox1','COX1','COI','coi','cytochrome oxidase 1','cytochrome oxidase I',
              'cytochrome oxidase subunit 1','cytochrome oxidase subunit I',
              'cox I','coxI', 'cytochrome c oxidase subunit I'],
              'COII':['MT-CO2','cox2','COX2','COII','coii','cytochrome oxidase 2','cytochrome oxidase II',
