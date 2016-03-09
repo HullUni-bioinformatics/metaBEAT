@@ -1689,7 +1689,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 							if hit == 'nohit':
 								fas_out = open('nohit.fasta',"w")
 							else:
-								fas_out = open(tax_dict[hit][2].replace(" ", "_")+'.fasta',"w")
+								fas_out = open(tax_dict[hit][2].replace(" ", "_").replace("/", "-")+'.fasta',"w")
 
 
 							for ID in current_reads:
