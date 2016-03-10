@@ -335,7 +335,9 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     tax_count = defaultdict(dict)
     levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
 #    print len(b_filtered['hit'])
+    
     if b_filtered.has_key('hit'):
+    	    minimum = tax_dict["tax_id"].index("kingdom") #find the minimum index, i.e. the index for 'kingdom'
 	    for query in b_filtered['hit'].keys():
 	        if len(b_filtered['hit'][query]) == 1:
 	            if v:
@@ -370,29 +372,43 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 
 	                        if len(set(id_list)) == 1:
 				    LCA_taxid=""
-#				    print "found LCA %s at level %s" %(id_list[0], tax_dict["tax_id"][index])
 				    ok=0
-				    while not ok:
+				    if v:
+				    	print "found LCA %s at level %s" %(id_list[0], tax_dict["tax_id"][index])
+				    while not ok and index >= minimum:
+#				    	print "checking level %s (index: %i)" %(tax_dict["tax_id"][index], index)
 					if tax_dict["tax_id"][index] in levels:
+#					    print "level ok\n"
 					    if tax_dict[id_list[0]][index]:
 						LCA_taxid = tax_dict[id_list[0]][index]
 					    	ok=1
 					    	if v:
-#							print "assigned LCA %s (taxid %s) at level %s" %(tax_dict[id_list[0]][2], id_list[0], tax_dict["tax_id"][index])
 							print "assigned LCA %s (taxid %s) at level %s" %(tax_dict[LCA_taxid][2], LCA_taxid, tax_dict["tax_id"][index])
 					    else:
-						break
+						if v:
+							print "no valid taxid found at level %s" %tax_dict["tax_id"][index]
+						index-=1
 					else:
+					    if v:
+						print "assignment to level %s (taxid %s) is not acceptable" %(tax_dict["tax_id"][index], tax_dict[id_list[0]][index])
 					    index-=1
-#					    if v:
-#						print "assignment to level %s (taxid %s) is not acceptable" %(tax_dict["tax_id"][index], tax_dict[id_list[0]][index])
 ##	                            print tax_dict[id_list[0]][1]
 ##	                            print tax_dict[id_list[0]][2]
-	                            if not tax_count[tax_dict["tax_id"][index]].has_key(LCA_taxid):
-	                                tax_count[tax_dict["tax_id"][index]][LCA_taxid] = []
- 	                            tax_count[tax_dict["tax_id"][index]][LCA_taxid].append(query)
-	                            del b_filtered['hit'][query]
-	                            break
+				    if LCA_taxid:
+		                            if not tax_count[tax_dict["tax_id"][index]].has_key(LCA_taxid):
+		                                tax_count[tax_dict["tax_id"][index]][LCA_taxid] = []
+ 		                            tax_count[tax_dict["tax_id"][index]][LCA_taxid].append(query)
+#					    print "%s\t%s" %(tax_dict["tax_id"][index], tax_count[tax_dict["tax_id"][index]][LCA_taxid])
+		                            del b_filtered['hit'][query]
+		                            break
+				    else:
+			    		if v:
+				    		print "was unable to assign LCA to %s" %query
+			    		if not tax_count.has_key('nohit'):
+	            				tax_count['nohit'] = {'nohit':[]}
+	        	    		tax_count['nohit']['nohit'].append(query)
+			    		break
+
 #	                        else:
 #	                            print "not yet LCA"
                             
