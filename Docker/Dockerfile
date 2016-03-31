@@ -43,6 +43,7 @@ RUN mv /src/taxonomy.db /usr/bin/
 #add scripts
 ADD scripts/fetch_from_db.py /usr/bin/
 ADD scripts/metaBEAT.py /usr/bin/
+ADD scripts/metaBEAT_global.py /usr/bin/
 ADD scripts/jplace_to_biom.py /usr/bin/
 
 #create mount point at /working
