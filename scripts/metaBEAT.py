@@ -37,6 +37,7 @@ taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
 VERSION="0.9"
+DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
 methods = []	#this list will contain the list of methods to be applied to the queries
 all_seqs = []
@@ -66,7 +67,7 @@ gi_to_taxid_dict = {}
 taxid_list = []
 tax_dict = {}
 
-parser = argparse.ArgumentParser(description='metaBEAT - metaBarcoding and Environmental DNA Analyses tool', prog='metaBEAT.py')
+parser = argparse.ArgumentParser(description=DESCRIPTION, prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
 #parser = argparse.ArgumentParser(usage='%(prog)s [options] REFlist', formatter_class=RawTextHelpFormatter)
 
@@ -120,7 +121,7 @@ biom_group.add_argument("--mock_meta_data", help="add mock metadata to the sampl
 Entrez_group = parser.add_argument_group('Entrez identification','metaBEAT is querying the NCBI Entrez databases, please provide an email address for identification')
 Entrez_group.add_argument("-@", "--email", help='provide your email address for identification to NCBI', metavar='<email-address>', action="store", default="")
 
-parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
+parser.add_argument("--version", action="version", version=VERSION) #'%(prog)s v.'+VERSION)
 args = parser.parse_args()
 
 
@@ -664,6 +665,8 @@ def write_out_refs_to_fasta(ref_seqs, ref_taxids = {}):
 
 
 ####START OF MAIN PROGRAM
+
+print "\n%s\n" %DESCRIPTION
 
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
