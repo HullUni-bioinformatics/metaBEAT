@@ -36,7 +36,7 @@ import shlex, subprocess
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.9"
+VERSION="0.9-global-c1"
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
 methods = []	#this list will contain the list of methods to be applied to the queries
 all_seqs = []
@@ -85,6 +85,7 @@ query_group = parser.add_argument_group('Query preprocessing', 'The parameters i
 query_group.add_argument("--PCR_primer", help='PCR primers (provided in fasta file) to be clipped from reads', metavar="<FILE>", action="store")
 query_group.add_argument("--trim_adapter", help="trim adapters provided in file", metavar="<FILE>", action="store")
 query_group.add_argument("--trim_qual", help="minimum phred quality score (default: 30)", metavar="<INT>", type=int, action="store", default=30)
+query_group.add_argument("--phred", help="phred quality score offset - 33 or 64 (default: 33)", metavar="<INT>", type=int, action="store", default=33)
 query_group.add_argument("--trim_window", help="sliding window size (default: 5) for trimming; if average quality drops below the specified minimum quality all subsequent bases are removed from the reads", metavar="<INT>", type=int, action="store", default=5)
 query_group.add_argument("--trim_minlength", help="minimum length of reads to be retained after trimming (default: 50)", metavar="<INT>", type=int, action="store", default=50)
 query_group.add_argument("--merge", help="attempt to merge paired-end reads", action="store_true")
@@ -92,7 +93,7 @@ query_group.add_argument("--product_length", help="estimated length of PCR produ
 query_group.add_argument("--merged_only", help="only process successfully merged read-pairs", action="store_true")
 query_group.add_argument("--forward_only", help="only process sequences that contain forward reads (i.e. unmerged forward reads and merged reads)", action="store_true")
 query_group.add_argument("--length_filter", help="only process reads, which are within +/- 10 percent of this length", metavar="<INT>", type=int, action="store")
-query_group.add_argument("--phred", help="phred quality score offset - 33 or 64 (default: 33)", metavar="<INT>", type=int, action="store", default=33)
+query_group.add_argument("--length_deviation", help="allowed deviation (in percent) from length specified by --length_filter (default=0.1)", metavar="<FLOAT>", type=float, action="store", default=0.1)
 reference_group = parser.add_argument_group('Reference', 'The parameters in this group affect the reference to be used in the analyses')
 reference_group.add_argument("-R", "--REFlist", help="file containing a list of files to be used as reference sequences", metavar="<FILE>", action="store")
 reference_group.add_argument("--gb_out", help="output the corrected gb file", metavar="<FILE>", action="store", default="")
@@ -106,6 +107,7 @@ cluster_group.add_argument("--clust_cov", help="minimum number of records in clu
 blast_group = parser.add_argument_group('BLAST search', 'The parameters in this group affect BLAST search and BLAST based taxonomic assignment')
 blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.80)", type=float, metavar="<FLOAT>", action="store", default="0.80")
+blast_group.add_argument("--min_ali_length", help="minimum alignment length in percent of total query length (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
 phyloplace_group = parser.add_argument_group('Phylogenetic placement', 'The parameters in this group affect phylogenetic placement')
 phyloplace_group.add_argument("--refpkg", help="PATH to refpkg", metavar="<DIR>", action="store")
@@ -161,7 +163,7 @@ def vsearch_cluster(infile, cluster_match, threads, sampleID):
 	        print stdout
 
 
-def concat_and_filter_by_length(inlist, outfile, excludefile, form='fasta', length=0):
+def concat_and_filter_by_length(inlist, outfile, excludefile, form='fasta', length=0, devi=0.1):
 	"""
 	The Function concatenates sequences from a list of files into a single file and
 	 applies a length filter if specified
@@ -183,7 +185,7 @@ def concat_and_filter_by_length(inlist, outfile, excludefile, form='fasta', leng
     		
 		for record in SeqIO.parse(IN,'fastq'):
 			if length:
-                		if len(record.seq) < length*0.9 or len(record.seq) > length*1.1:
+                		if len(record.seq) < length*(1-devi) or len(record.seq) > length*(1+devi):
 					record.id += '|length_filtered'
 					record.description = record.id
 					exclude.append(record)
@@ -364,9 +366,11 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     "The function takes a dictionary of queries and their hits"
     "and provides taxonomic assignment based on the LCA method."
     tax_count = defaultdict(dict)
+    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
 
 #    print len(b_filtered['hit'])
     if b_filtered.has_key('hit'):
+            minimum = tax_dict["tax_id"].index("kingdom") #find the minimum index, i.e. the index for 'kingdom'
 	    for query in b_filtered['hit'].keys():
 	        if len(b_filtered['hit'][query]) == 1:
 	            if v:
@@ -400,15 +404,44 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 #	                        print "ok - all have valid taxid"
 
 	                        if len(set(id_list)) == 1:
-				    if v:
-		                            print "found LCA %s at level %s" %(id_list[0], tax_dict["tax_id"][index])
-#	                            print tax_dict[id_list[0]][1]
-#	                            print tax_dict[id_list[0]][2]
-	                            if not tax_count[tax_dict["tax_id"][index]].has_key(id_list[0]):
-	                                tax_count[tax_dict["tax_id"][index]][id_list[0]] = []
- 	                            tax_count[tax_dict["tax_id"][index]][id_list[0]].append(query)
-	                            del b_filtered['hit'][query]
-	                            break
+                                    LCA_taxid=""
+                                    ok=0
+                                    if v:
+                                        print "found LCA %s at level %s" %(id_list[0], tax_dict["tax_id"][index])
+                                    while not ok and index >= minimum:
+#                                       print "checking level %s (index: %i)" %(tax_dict["tax_id"][index], index)
+                                        if tax_dict["tax_id"][index] in levels:
+#                                           print "level ok\n"
+                                            if tax_dict[id_list[0]][index]:
+                                                LCA_taxid = tax_dict[id_list[0]][index]
+                                                ok=1
+                                                if v:
+                                                        print "assigned LCA %s (taxid %s) at level %s" %(tax_dict[LCA_taxid][2], LCA_taxid, tax_dict["tax_id"][index])
+                                            else:
+                                                if v:
+                                                        print "no valid taxid found at level %s" %tax_dict["tax_id"][index]
+                                                index-=1
+                                        else:
+                                            if v:
+                                                print "assignment to level %s (taxid %s) is not acceptable" %(tax_dict["tax_id"][index], tax_dict[id_list[0]][index])
+                                            index-=1
+##                                  print tax_dict[id_list[0]][1]
+##                                  print tax_dict[id_list[0]][2]
+                                    if LCA_taxid:
+                                            if not tax_count[tax_dict["tax_id"][index]].has_key(LCA_taxid):
+                                                tax_count[tax_dict["tax_id"][index]][LCA_taxid] = []
+                                            tax_count[tax_dict["tax_id"][index]][LCA_taxid].append(query)
+#                                           print "%s\t%s" %(tax_dict["tax_id"][index], tax_count[tax_dict["tax_id"][index]][LCA_taxid])
+                                            del b_filtered['hit'][query]
+                                            break
+                                    else:
+                                        if v:
+                                                print "was unable to assign LCA to %s" %query
+                                        if not tax_count.has_key('nohit'):
+                                                tax_count['nohit'] = {'nohit':[]}
+                                        tax_count['nohit']['nohit'].append(query)
+                                        break
+
 #	                        else:
 #	                            print "not yet LCA"
                             
@@ -552,8 +585,7 @@ def gi_to_taxid(b_filtered, all_taxids, processed, v=0):
     all_taxids = list(set(all_taxids))
     return all_taxids
 
-
-def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
+def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95):
     "The function interprets a BLAST results handle and filters results subsequent taxonomic assignment using LCA"
     result = {'format':''}
     count=0
@@ -562,31 +594,38 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
         count += 1
         if v:
             print "\nquery: %s" % res.query #the current query
+            print "query_length: %s" %str(res.query_length)
         if not res.alignments:  #if no alignment was found for the query
             if v:
                 print "no hit - done"
-	    if not result.has_key('nohit'):
-		result['nohit'] = []
+            if not result.has_key('nohit'):
+                result['nohit'] = []
             result['nohit'].append(res.query)
-            
+
+        elif (len(res.alignments[0].hsps[0].query) < int(res.query_length*m_ali_length)):
+                if v:
+                        print "alignment length (%i) below threshold (%i * %s -> %i)" %(len(res.alignments[0].hsps[0].query), res.query_length, m_ali_length, (res.query_length*m_ali_length))      
+                if not result.has_key('nohit'):
+                        result['nohit'] = []
+                result['nohit'].append(res.query)
         elif (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) < m_ident) or res.alignments[0].hsps[0].bits < m_bitscore:
             if v:
                 print "no significant hit - done"
-	    if not result.has_key('nohit'):
-		result['nohit'] = []
+            if not result.has_key('nohit'):
+                result['nohit'] = []
             result['nohit'].append(res.query)
-            
+
         else: #if a hit has been found
-	    if not result.has_key('hit'):
-		result['hit'] = {}
+            if not result.has_key('hit'):
+                result['hit'] = {}
 
             if (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) == 1): #if we have a full length 100 % match adjust the bitscore so window so that only this hit is considered
                 bit_score_cutoff = 1
                 if v:
-                        print "\nFull length match:\n"
-                        print "Query length: %s\nnumber of identitites: %s" %(str(len(res.alignments[0].hsps[0].query)), str(res.alignments[0].hsps[0].identities))
-        
+                        print "\n100% match:\n"
+                        print "Query length: %i\nAlignment length: %s\nnumber of identitites: %s" %(res.query_length, str(len(res.alignments[0].hsps[0].query)), str(res.alignments[0].hsps[0].identities))
             max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
+
             result['hit'][res.query]=[] #create empty list for query
             for alignment in res.alignments: #for each hit of the current query
 #                print alignment.hsps[0].bits
@@ -595,14 +634,14 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
                         result['format']='gi'
                     else:
                         result['format']='taxid'
-                        
-                if alignment.hsps[0].bits > (max_bit_score*0.9): #if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
+
+                if alignment.hsps[0].bits >= (max_bit_score*bit_score_cutoff): #if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
 #                    print alignment.title.split("|")[1]
-		    if result['format'] == 'gi':
+                    if result['format'] == 'gi':
                         result['hit'][res.query].append(alignment.title.split("|")[1])
-		    elif result['format'] == 'taxid':
+                    elif result['format'] == 'taxid':
                         result['hit'][res.query].append(alignment.title.split("|")[-2])
-			
+
                     if v:
                         print "%s\t%s" %(alignment.hsps[0].bits, alignment.title)
                 else:
@@ -611,9 +650,9 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8):
 #            print "%s: %s" %(res.query, result['hit'][res.query])
 
     print "%i queries processed" %count
-    
-    if not result['format']:	#if no database format could be determined at this point that means there was no significant hit, so we set the format to unknown
-	result['format'] = 'unknown'
+
+    if not result['format']:    #if no database format could be determined at this point that means there was no significant hit, so we set the format to unknown
+        result['format'] = 'unknown'
 
     return result
 
@@ -687,6 +726,9 @@ if args.product_length:
 else:
 	args.product_length = ''
 
+if (args.min_ali_length > 1 or args.min_ali_length < 0) or (args.min_ident > 1 or args.min_ident < 0):
+        print "\nThe options --min_ali_length and --min_ident expect values between 0 and 1.\n"
+        sys.exit()
 
 if args.REFlist and args.blast_db:
 	print "\nPlease provide either a set of custom reference sequences OR a precompiled BLAST database\n"
@@ -1061,7 +1103,7 @@ if args.blast:
 	os.chdir('../')
 
 #start read stats output
-read_counts_out = open("reads_stats.csv","w")
+read_counts_out = open(args.output_prefix+"_read_stats.csv","w")
 outstring = "sample,"+",".join(read_metrics)
 read_counts_out.write(outstring+"\n")
 read_counts_out.close()
@@ -1204,7 +1246,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 					cmd = subprocess.call(cmd, shell=True)
 
 				print "\nCLIP PRIMER SEQUENCES\n"
-				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s temp_forward.paired.fastq.gz temp_forward.singletons.fastq.gz temp_reverse.paired.fastq.gz temp_reverse.singletons.fastq.gz ILLUMINACLIP:temp_primers.fasta:2:5:10 MINLEN:%i" % (args.n_threads, args.phred, trimmed_files[0]+'.rc.gz', trimmed_files[2]+'.rc.gz', args.trim_minlength)
+				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s temp_forward.paired.fastq.gz temp_forward.singletons.fastq.gz temp_reverse.paired.fastq.gz temp_reverse.singletons.fastq.gz ILLUMINACLIP:temp_primers.fasta:2:5:5 MINLEN:%i" % (args.n_threads, args.phred, trimmed_files[0]+'.rc.gz', trimmed_files[2]+'.rc.gz', args.trim_minlength)
 
 				trimmomatic="%s" % trimmomatic_exec
 				print trimmomatic
@@ -1312,7 +1354,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 					print "\nkeeping only forward sequences (non merged forward and merged reads) for subsequent analyses"
 					keep_only(inlist=trimmed_files, pattern_list=['.extendedFrags.fastq.gz', '_forward', 'notCombined_1'])
 			
-				survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=queryID+'_excluded.fasta', form='fasta', length=args.length_filter)
+				survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=queryID+'_excluded.fasta', form='fasta', length=args.length_filter, devi=args.length_deviation)
 				print "\n%i sequences survived filtering\n" %survived
 #				sys.exit()
 
@@ -1443,7 +1485,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 
 
 		print "WRITING BASIC READ STATS TO FILE\n"
-		read_counts_out = open("../reads_stats.csv","a")
+		read_counts_out = open("../"+args.output_prefix+"_read_stats.csv","a")
 		outstring = queryID
 		for m in read_metrics:
 			if read_stats[queryID].has_key(m):
@@ -1522,7 +1564,7 @@ if args.blast or args.phyloplace:
 
 			print "get top 10% hits from blast output .. ",
 			res_dict = {}
-			res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit)
+			res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit, m_ali_length=args.min_ali_length)
 
 			if res_dict['format'] == 'gi':	#This is the case if BLAST was performed against Genbank
 				print '\n'+time.strftime("%c")+'\n'
@@ -1656,10 +1698,11 @@ if args.blast or args.phyloplace:
 	clust_to_biom = []
 	data_to_biom = []
 	observ_ids=[]
+#       print "tax_dict:\n%s" %tax_dict
 	for tax_rank in reversed(tax_dict["tax_id"]):
 		if global_taxa.has_key(tax_rank):
-#			print tax_rank
-#			print global_taxa[tax_rank]
+#                       print "tax_rank: %s" %tax_rank
+#                       print "taxa: %s" %global_taxa[tax_rank]
 			for out in sorted(global_taxa[tax_rank]):
 #				print "%s: %s" %(out, global_taxa[tax_rank][out])
 				observ_ids.append(tax_dict[out][2])
@@ -1767,8 +1810,9 @@ if args.blast or args.phyloplace:
 #	print len(data)
 #	print "cluster data: %s" %clust_data
 #	print len(clust_data)
-#	print "observed_ids: %s" %observ_ids
+#       print "observed_ids: %s" %sorted(observ_ids)
 #	print len(observ_ids)
+#       print "non redundant: %i" %len(list(set(observ_ids)))
 #	print "sample ids: %s" %sample_ids
 #	print len(sample_ids)
 #	print "observation metadata: %s" %observation_metadata
@@ -2059,7 +2103,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 							if hit == 'nohit':
 								fas_out = open('nohit.fasta',"w")
 							else:
-								fas_out = open(tax_dict[hit][2].replace(" ", "_")+'.fasta',"w")
+								fas_out = open(tax_dict[hit][2].replace(" ", "_").replace("/", "-")+'.fasta',"w")
 
 
 							for ID in current_reads:
