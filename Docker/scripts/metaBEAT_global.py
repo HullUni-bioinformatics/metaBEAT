@@ -450,7 +450,7 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     	    if len(b_filtered['hit']) == 0:
 	        print "all queries have been successfully assigned to a taxonomy"
 	    else:
-	        print "%i queries failed:\n%s" %(len(b_filtered['hit']), b_filtered['hit'])
+	        print "\nLCA detection failed for %i queries:\n%s" %(len(b_filtered['hit']), b_filtered['hit'])
 
     if b_filtered.has_key('nohit'):
         if not tax_count.has_key('nohit'):
@@ -1646,7 +1646,7 @@ if args.blast or args.phyloplace:
 										centroids[c].description = centroids[c].id
 										to_print.append(centroids[c])
 								if not hit == 'nohit':
-									OUT = open(sampleID+'/centroids_per_taxon/'+tax_dict[hit][2].replace(" ","_")+'.fasta', 'w')
+									OUT = open(sampleID+'/centroids_per_taxon/'+tax_dict[hit][2].replace(" ","_").replace("/", "-")+'.fasta', 'w')
 								else:
 									OUT = open(sampleID+'/centroids_per_taxon/unassigned.fasta', 'w')
 								SeqIO.write(to_print, OUT, 'fasta')
