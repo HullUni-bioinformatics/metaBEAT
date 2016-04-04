@@ -36,7 +36,7 @@ import shlex, subprocess
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.9-global-c1"
+VERSION="0.9-global-c2"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -66,6 +66,7 @@ blast_dict = defaultdict(dict) #this will hold the results from parsing the BLAS
 gi_to_taxid_dict = {}
 taxid_list = []
 tax_dict = {}
+BIOM_tables = {}
 
 parser = argparse.ArgumentParser(description=DESCRIPTION, prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
@@ -131,6 +132,237 @@ if len(sys.argv) < 2:	#if the script is called without any arguments display the
 
 
 ###FUNCTIONS
+
+def add_taxonomy_to_biom(per_tax_level_clusters, per_tax_level_trees, biom_in):
+
+	dictionary = {}
+	levels = ['nohit', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+	biom_out = biom_in.copy()
+	otu_order = []
+	trees = []
+
+#	print per_tax_level_trees
+
+#	for otu in biom_out.ids(axis='observation'):
+#		print otu
+
+	for level in reversed(levels):
+		if level in per_tax_level_clusters:
+#			print "level: %s" %level
+			trees_ordered_by_level = []
+			for tid in per_tax_level_clusters[level]:
+#				print "\ttid: %s" %tid
+				for i in range(len(per_tax_level_clusters[level][tid])):
+					#add dummy to list
+					if tid == 'nohit':
+						dictionary[per_tax_level_clusters[level][tid][i]] = {'taxonomy': per_tax_level_trees[level]['unassigned']}
+#						print "\t\t%s\t%s" %(per_tax_level_clusters[level][tid][i], per_tax_level_trees[level]['unassigned'])
+						trees_ordered_by_level.append("|".join(per_tax_level_trees[level]['unassigned']))
+					else:
+						dictionary[per_tax_level_clusters[level][tid][i]] = {'taxonomy': per_tax_level_trees[level][tid]}
+#						print "\t\t%s\t%s" %(per_tax_level_clusters[level][tid][i], per_tax_level_trees[level][tid])
+						trees_ordered_by_level.append("|".join(per_tax_level_trees[level][tid]))
+
+#			print "ORDER:"
+			trees_ordered_by_level = sorted(list(set(trees_ordered_by_level)))
+			trees.extend(trees_ordered_by_level)
+			for tree in trees_ordered_by_level:
+#				print "\t%s" %tree
+				if level == 'nohit':
+					for otu in sorted(per_tax_level_clusters[level]['nohit']):
+#                                        	print "\t\t%s" %otu
+						otu_order.append(otu)
+				else:
+					for tid in per_tax_level_clusters[level]:
+						if "|".join(per_tax_level_trees[level][tid]) == tree:
+							for otu in sorted(per_tax_level_clusters[level][tid]):
+#								print "\t\t%s" %otu
+								otu_order.append(otu)
+						 
+
+#	print "\n### OTU table with taxonomy ###\n"
+	biom_out.add_metadata(md=dictionary, axis='observation')
+#	print biom_out.to_tsv(header_key='taxonomy', header_value='taxomomy')
+#	print "\n\n"
+
+
+	#sorting by taxonomy
+#	print "\n### sorted OTU table with taxonomy ###\n"
+	sorted_biom_out = biom_out.sort_order(otu_order, axis='observation')
+#	print sorted_biom_out.to_tsv(header_key='taxonomy', header_value='taxomomy')
+#	print "\n\n"
+
+	return sorted_biom_out
+
+def collapse_biom_by_taxonomy(in_table):
+
+#	sample_metadata = {}
+#        for s_id in in_table.ids(axis='sample'):
+#		sample_metadata[s_id] = {'metadata':{}}
+
+	
+	bin_f = lambda id_, x: x['taxonomy'][-1].split("__")[1]
+	biom_out_collapsed = in_table.collapse(bin_f, norm=False, min_group_size=1, axis='observation')
+#	for taxon in biom_out_collapsed.ids(axis='observation'):
+		
+#	print biom_out_collapsed.to_tsv(header_key='taxonomy', header_value='taxomomy')
+#	print "\n\n"
+
+	#restore original order and taxonomy metadata
+	trees = [] 
+#	print in_table.metadata(axis='observation')
+	for otu in in_table.ids(axis='observation'):
+#		print otu
+		if not "|".join(in_table.metadata(otu, axis='observation')['taxonomy']) in trees:
+			trees.append("|".join(in_table.metadata(otu, axis='observation')['taxonomy']))
+
+#	print trees
+	collapsed_order = []
+	collapsed_meta = {}
+	for t in trees:
+		collapsed_order.append(t.split("|")[-1].split("__")[-1])
+		collapsed_meta[t.split("|")[-1].split("__")[-1]] = {'taxonomy': t.split("|")}
+	biom_out_collapsed.add_metadata(md=collapsed_meta, axis='observation')
+	biom_out_collapsed_sorted = biom_out_collapsed.sort_order(collapsed_order, axis='observation')
+#	print biom_out_collapsed_sorted.to_tsv(header_key='taxonomy', header_value='taxomomy')
+#	print "\n\n"
+
+	return biom_out_collapsed_sorted
+
+def pa_and_collapse_by_taxonomy(in_table):
+
+	bin_f = lambda id_, x: x['taxonomy'][-1].split("__")[1]
+
+#	print "\n### sorted presence-absence OTU table with taxonomy ###\n"
+	pa_sorted_biom = in_table.pa(inplace=False)	
+	pa_sorted_biom_collapsed = pa_sorted_biom.collapse(bin_f, norm=False, min_group_size=1, axis='observation')
+
+	#restore original order and taxonomy metadata
+	trees = [] 
+#	print in_table.metadata(axis='observation')
+	for otu in in_table.ids(axis='observation'):
+#		print otu
+		if not "|".join(in_table.metadata(otu, axis='observation')['taxonomy']) in trees:
+			trees.append("|".join(in_table.metadata(otu, axis='observation')['taxonomy']))
+
+	collapsed_order = []
+	collapsed_meta = {}
+	for t in trees:
+		collapsed_order.append(t.split("|")[-1].split("__")[-1])
+		collapsed_meta[t.split("|")[-1].split("__")[-1]] = {'taxonomy': t.split("|")}
+
+	pa_sorted_biom_collapsed.add_metadata(md=collapsed_meta, axis='observation')
+	pa_sorted_biom_collapsed = pa_sorted_biom_collapsed.sort_order(collapsed_order, axis='observation')
+
+#	print pa_sorted_biom_collapsed.to_tsv(header_key='taxonomy', header_value='taxomomy')
+#	print "\n\n"
+
+	return pa_sorted_biom_collapsed
+
+def find_full_taxonomy(per_tax_level, taxonomy_dictionary):
+	
+	syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
+        levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+	level_indices = []
+	tax_trees = {}
+
+#	print "taxonomy dict headers: %s" %taxonomy_dictionary['tax_id']
+#	print "taxonomy dict headers: %s" %len(taxonomy_dictionary['tax_id'])
+	for level in levels:
+		tax_trees[level] = {}
+		for i in range(len(taxonomy_dictionary['tax_id'])):
+			if level == taxonomy_dictionary['tax_id'][i]:
+				level_indices.append(i)
+
+	for level in reversed(levels):
+		if level in per_tax_level:
+#			print "Taxonomic level: %s" %level
+			
+			for tid in per_tax_level[level]:
+#				print "\ttaxid: %s" %tid
+				ind_taxonomy = []
+#				print taxonomy_dictionary[tid]
+#				print len(taxonomy_dictionary[tid])
+				for i in range(len(level_indices)):#range(len(levels)):
+#					print "seeking level %s at index: %s" %(taxonomy_dictionary['tax_id'][level_indices[i]], level_indices[i])
+					if taxonomy_dictionary[tid][level_indices[i]]:
+                                        	ind_taxonomy.append('%s%s' %(syn[levels[i]],taxonomy_dictionary[taxonomy_dictionary[tid][level_indices[i]]][2].replace(' ','_')))
+                                	else:
+                                        	ind_taxonomy.append('%sunknown' %syn[levels[i]])
+
+				for j in reversed(range(len(levels))):
+		                        if '_unknown' in ind_taxonomy[j]:
+                                		del ind_taxonomy[j]
+					else:
+						break
+
+				tax_trees[level][tid] = ind_taxonomy
+#				print "\ttaxonomy: %s" %tax_trees[level][tid]
+#				for otu in per_tax_level[level][tid]:
+#					print "\t\totu: %s" %otu
+#		else:
+#			print "Taxonomic level '%s' was not observed" %level
+
+	if per_tax_level['nohit']:
+#		print "Taxonomic level: 'nohit'"
+		tax_trees['nohit'] = {'unassigned': ['__unassigned']}
+#		print "\ttaxonomy: %s" %tax_trees['nohit']['unassigned']
+#		for otu in per_tax_level['nohit']['nohit']:
+#                	print "\t\totu: %s" %otu
+
+	for rank in tax_trees.keys():
+		if not tax_trees[rank]:
+			del tax_trees[rank]
+	
+#	print tax_trees
+	return tax_trees
+
+def global_uc_to_biom(clust_dict, query_dict):
+	
+	import numpy as np	
+	from biom.table import Table
+
+	data_to_biom = []
+	observation_ids = []
+	sample_ids = []
+	sample_metadata = []
+	observation_metadata = []
+
+	observation_ids = clust_dict.keys()
+	sample_ids = sorted(query_dict.keys())
+	
+	for s_id in sample_ids:
+		sample_metadata.append({})
+#		sample_metadata[s_id] = {'metadata':{}}
+
+#	print sample_ids
+#	print observation_ids	
+
+	for OTU in observation_ids:
+#		print "OTU: %s" %OTU
+#		print clust_dict[OTU]
+		per_OTU = []
+		for sample in sample_ids:
+#			print "\t%s" %sample
+			per_OTU.append(int(0))
+			for i in range(len(clust_dict[OTU])):
+				if clust_dict[OTU][i].startswith(sample+"|"):
+					per_OTU[-1] += int(query_dict[sample]['cluster_counts'][clust_dict[OTU][i].split("|")[1]])
+#					break
+
+		data_to_biom.append(per_OTU)
+		
+	data = np.asarray(data_to_biom)
+
+#	print "\n### FINAL CHECK: ###\n"
+#	print "number of OTUs: %s" %len(observation_ids)
+#	print "number of samples: %s" %len(sample_ids)
+#	print "number of observations: %s" %len(data)
+	
+	table = Table(data, observation_ids, sample_ids, table_id='OTU table', sample_metadata=sample_metadata)
+#	print table
+	return table
+
 
 def concatenate_for_global_clustering(queries_dict, out):
 	"""
@@ -1439,7 +1671,7 @@ if args.blast or args.phyloplace or args.merge or args.cluster:
 			cluster_reads = defaultdict(list)
 			parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
 			
-			print cluster_reads.keys()
+#			print cluster_reads.keys()
 
 #			total_queries = querycount[queryID]
 			total_clusters = len(cluster_counts)
@@ -1532,6 +1764,8 @@ global_cluster_counts = {}
 global_cluster_reads = defaultdict(list)
 parse_vsearch_uc(fil=global_uc, cluster_counts=global_cluster_counts, extract_reads=True, cluster_reads=global_cluster_reads)
 
+BIOM_tables['OTU_denovo'] = global_uc_to_biom(clust_dict=global_cluster_reads, query_dict=queries)
+
 if args.blast or args.phyloplace:
 	if args.blast:
                 methods.append('blast')
@@ -1609,14 +1843,19 @@ if args.blast or args.phyloplace:
 		if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
                 	tax_dict['tax_id'] = ['nohit']
 
+
 		print "\n#### RESULT SUMMARY: %s ####\n" %approach
 
+		print "### CURRENTLY UNDER CONSTRUCTION - see biom files for summaries ###"
                 for tax_rank in reversed(tax_dict["tax_id"]):
-#               	print "The current rank to be checked is: %s" %tax_rank
+##############################
+			break
+##############################
+#	               	print "\n#### The current rank to be checked is: %s" %tax_rank
                 	if taxonomy_count.has_key(tax_rank):
-#				print "\nLooking at taxonomic rank: %s\n" %tax_rank
+#				print "#### Looking at taxonomic rank: %s" %tax_rank
 				for hit in sorted(taxonomy_count[tax_rank].keys()):
-#					print "assignemnt: %s" %hit
+#					print "#### assignemnt: %s" %hit
                                 	if not tax_rank == 'nohit':
                                         	global_taxids_hit.append(hit)
 
@@ -1661,6 +1900,9 @@ if args.blast or args.phyloplace:
 		
 		index = 0
 		for sampleID in sorted(queries):
+############################################
+			break
+############################################
 						#if I wanted to extract the actual reads I think it would be best to parse_to_dict here: queries[queryID]['queryfile']	
 			if read_stats[sampleID]['queries']:
 				totall = read_stats[sampleID]['queries']
@@ -1694,10 +1936,54 @@ os.utime('GLOBAL', None)
 #This is under construction	
 
 
-if args.blast or args.phyloplace:
+if args.blast: #or args.phyloplace:
 
 	print "\n##### DONE PROCESSING ALL SAMPLES #####"		
 	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
+
+	taxonomic_trees = {}
+	taxonomic_trees = find_full_taxonomy(per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict)
+	BIOM_tables['OTU_taxonomy'] = add_taxonomy_to_biom(per_tax_level_clusters=taxonomy_count, per_tax_level_trees=taxonomic_trees, biom_in=BIOM_tables['OTU_denovo'])
+	BIOM_tables['taxon_taxonomy'] = collapse_biom_by_taxonomy(in_table=BIOM_tables['OTU_taxonomy'])
+	BIOM_tables['cluster_taxonomy'] = pa_and_collapse_by_taxonomy(in_table=BIOM_tables['OTU_taxonomy'])
+
+#	print tables
+	out=open(args.output_prefix+"-OTU-taxonomy.biom","w")
+	BIOM_tables['OTU_taxonomy'].to_json('metaBEAT v.'+VERSION, direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"-OTU-taxonomy.tsv","w")
+	out.write(BIOM_tables['OTU_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"-by-taxonomy-readcounts.biom","w")
+	BIOM_tables['taxon_taxonomy'].to_json('metaBEAT v.'+VERSION, direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"-by-taxonomy-readcounts.tsv","w")
+	out.write(BIOM_tables['taxon_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"-by-taxonomy-clustercounts.biom","w")
+	BIOM_tables['cluster_taxonomy'].to_json('metaBEAT v.'+VERSION, direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"-by-taxonomy-clustercounts.tsv","w")
+	out.write(BIOM_tables['cluster_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
+	out.close()
+
+print "\n##### DONE! #####\n"
+print '\n'+time.strftime("%c")+'\n'
+
+
+sys.exit()
+
+#This is the old solution
+
+if args.blast or args.phyloplace:
+	print "\n##### DONE PROCESSING ALL SAMPLES #####"		
+	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
+
 	clust_to_biom = []
 	data_to_biom = []
 	observ_ids=[]
@@ -1810,14 +2096,14 @@ if args.blast or args.phyloplace:
 
 ### double check all inputs for table
 #	print "data: %s" %data
-#	print len(data)
+#	print "data: %s "%len(data)
 #	print "cluster data: %s" %clust_data
 #	print len(clust_data)
 #       print "observed_ids: %s" %sorted(observ_ids)
-#	print len(observ_ids)
+#	print "observations: %s" %len(observ_ids)
 #       print "non redundant: %i" %len(list(set(observ_ids)))
 #	print "sample ids: %s" %sample_ids
-#	print len(sample_ids)
+#	print "samples: %s" %len(sample_ids)
 #	print "observation metadata: %s" %observation_metadata
 #	print len(observation_metadata)
 #	print "sample_metadata: %s" %sample_metadata
