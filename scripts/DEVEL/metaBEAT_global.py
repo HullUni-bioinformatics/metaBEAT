@@ -1766,6 +1766,15 @@ parse_vsearch_uc(fil=global_uc, cluster_counts=global_cluster_counts, extract_re
 
 BIOM_tables['OTU_denovo'] = global_uc_to_biom(clust_dict=global_cluster_reads, query_dict=queries)
 
+out=open(args.output_prefix+"-OTU-denovo.biom","w")
+BIOM_tables['OTU_denovo'].to_json('metaBEAT v.'+VERSION, direct_io=out)
+out.close()
+
+out=open(args.output_prefix+"-OTU-denovo.tsv","w")
+out.write(BIOM_tables['OTU_denovo'].to_tsv()) #to_json('generaged by test', direct_io=out)
+out.close()
+
+
 if args.blast or args.phyloplace:
 	if args.blast:
                 methods.append('blast')
