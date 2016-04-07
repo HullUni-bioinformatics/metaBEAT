@@ -1006,6 +1006,10 @@ elif args.REFlist:
 				references[refdata[0]] = refdata[1]
 
 if args.querylist:
+	print "\nParsing querylist file\n"
+	data_formats = defaultdict(int)
+	barcode_count = 0
+	crop_count = 0
 	if not os.path.isfile(args.querylist):
 	        print "no valid query file supplied\n"
 	        sys.exit(0)
@@ -1023,6 +1027,7 @@ if args.querylist:
 				per_sample_query_format=""
 				per_sample_barcodes=[]
 				per_sample_query_files=[]
+				crops = []
 #				print "processing sample: %s" %querydata[0]
 				if not informats.has_key(querydata[1]):
 					print "query file format for sample %s is invalid" % querydata[0]
@@ -1032,6 +1037,8 @@ if args.querylist:
 					if re.match("^[ACTG]*$", querydata[i]):
 #						print "column %i looks like a barcode" %i
 						per_sample_barcodes.append(querydata[i])
+					elif re.match("^[0-9]*$", querydata[i]):
+						crops.append(int(querydata[i]))
 					else:
 						if not os.path.isfile(querydata[i]):
 							print "%s is not a valid file" %querydata[i]
@@ -1040,12 +1047,28 @@ if args.querylist:
 				
 				queries[querydata[0]]['format'] = querydata[1]
 				queries[querydata[0]]['files'] = per_sample_query_files
+				if crops:
+					queries[querydata[0]]['crop_bases'] = crops
+					crop_count+=1
 				if per_sample_barcodes:
 #					print "barcodes %s found for sample %s" %("-".join(per_sample_barcodes), querydata[0])
 					queries[querydata[0]]['barcodes'] = per_sample_barcodes
 					files_to_barcodes["|".join(per_sample_query_files)]["-".join(per_sample_barcodes)] = querydata[0]
+					barcode_count+=1
+				data_formats[queries[querydata[0]]['format']]+=1
 #			print queries[querydata[0]]
 #			print files_to_barcodes
+
+	print "Number of samples to process: %s" %len(queries)
+	print "Sequence input format: %s" %data_formats
+	print "Barcodes for demultiplexing provided for %s samples" %barcode_count
+	print "Cropping instructions provided for %s samples\n" %crop_count
+
+	if args.PCR_primer and crops:
+		print "\ncurrently you are requesting both PCR primer removal AND sequence clipping at the same time - note that sequences will be clipped first so primer removal may be redundant\n"
+		sys.exit()
+
+
 	if args.PCR_primer:
 		if not os.path.isfile(args.PCR_primer):
 			print "PCR primer file is not valid"
@@ -1290,7 +1313,7 @@ for reffile, refformat in references.items():
 #fas_out.write(unknown_seqs_dict[ID].format("fasta"))
 		gb_out.close()
 
-print "\ntotal number of valid records: %i\n" % len(all_seqs)
+	print "\ntotal number of valid records: %i\n" % len(all_seqs)
 
 if args.seqinfo:
 	print "write out seq_info.csv\n"
@@ -1346,399 +1369,396 @@ read_counts_out.close()
 
 print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
-if args.blast or args.phyloplace or args.merge or args.cluster:
+#if args.blast or args.phyloplace or args.merge or args.cluster:
 	##determine which methods will be applied
 #	if args.blast:
 #		methods.append('blast')
 #	if args.phyloplace:
 #		methods.append('pplacer')
 
-	print "\n######## PROCESSING QUERIES ########\n"
-	if files_to_barcodes:
-		print "\n### DEMULTIPLEXING ###\n"
-#		print "Barcodes detected - initialize demultiplexing"
-		if not os.path.exists('demultiplexed'):
-			os.makedirs('demultiplexed')
-			
-		os.chdir('demultiplexed')
-		for lib in files_to_barcodes.keys():
-			data = lib.split("|")
-			compr_mode = ""
-			print "assessing basic characteristics"
-#			print files_to_barcodes[lib]
-			barcodes_num = len(files_to_barcodes[lib].keys()[0].split("-"))
-			if barcodes_num == 2:
-#				print "interpreting barcodes as forward and reverse inline"
-				barcode_mode = "--inline_inline"
-			elif barcodes_num == 1:
-#				print "interpreting barcodes as forward inline only"
-				barcode_mode = "--inline_null"
+#	print "\n######## PROCESSING QUERIES ########\n"
+if files_to_barcodes:
+	print "\n### DEMULTIPLEXING ###\n"
+#	print "Barcodes detected - initialize demultiplexing"
+	if not os.path.exists('demultiplexed'):
+		os.makedirs('demultiplexed')
+		
+	os.chdir('demultiplexed')
+	for lib in files_to_barcodes.keys():
+		data = lib.split("|")
+		compr_mode = ""
+		print "assessing basic characteristics"
+#		print files_to_barcodes[lib]
+		barcodes_num = len(files_to_barcodes[lib].keys()[0].split("-"))
+		if barcodes_num == 2:
+#			print "interpreting barcodes as forward and reverse inline"
+			barcode_mode = "--inline_inline"
+		elif barcodes_num == 1:
+#			print "interpreting barcodes as forward inline only"
+			barcode_mode = "--inline_null"
 				
-			if lib.endswith(".gz"):
-				compr_mode = "gzfastq"
-#				print "set mode to %s" %compr_mode
-			else:
-				compr_mode = "fastq"
-#				print "set mode to %s" %compr_mode
+		if lib.endswith(".gz"):
+			compr_mode = "gzfastq"
+#			print "set mode to %s" %compr_mode
+		else:
+			compr_mode = "fastq"
+#			print "set mode to %s" %compr_mode
+#		print "create temporal barcode file"
+		BC = open("barcodes","w")
+		for sample in files_to_barcodes[lib].keys():
+#			print "This is sample: %s" %sample
+			bc = sample.split("-")
+#			print bc
+			if len(bc) != barcodes_num:
+				print "expecting %i barcode(s) for all samples - something's wrong with sample %s" %(barcodes_num, sample)
+				sys.exit()
+			BC.write("\t".join(bc)+"\n")
 
-#			print "create temporal barcode file"
-			BC = open("barcodes","w")
-			for sample in files_to_barcodes[lib].keys():
-#				print "This is sample: %s" %sample
-				bc = sample.split("-")
-#				print bc
-				if len(bc) != barcodes_num:
-					print "expecting %i barcode(s) for all samples - something's wrong with sample %s" %(barcodes_num, sample)
-					sys.exit()
-				BC.write("\t".join(bc)+"\n")
-
-			BC.close()
-			if len(data)>1:
-				print "data comes as paired end - ok"
-				demultiplex_cmd="process_shortreads -1 %s -2 %s -i %s -o . -b barcodes %s -y fastq" %(data[0], data[1], compr_mode, barcode_mode)
-				print demultiplex_cmd
-				cmdlist = shlex.split(demultiplex_cmd)
-				cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
-				stdout,stderr = cmd.communicate() #[0]
+		BC.close()
+		if len(data)>1:
+			print "data comes as paired end - ok"
+			demultiplex_cmd="process_shortreads -1 %s -2 %s -i %s -o . -b barcodes %s -y fastq" %(data[0], data[1], compr_mode, barcode_mode)
+			print demultiplex_cmd
+			cmdlist = shlex.split(demultiplex_cmd)
+			cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
+			stdout,stderr = cmd.communicate() #[0]
+			if args.verbose:
 				print stdout
+			if stderr:
 				print stderr
 
-#				print "renaming results"
-				for sample in files_to_barcodes[lib].keys():
-#					print files_to_barcodes[lib][sample]
-					new_file_list=[]
-					for a in range(1,3):
-						old = "sample_%s.%i.fq" %(sample,a)
-#						print old
-						new = "%s_%i.fastq" %(files_to_barcodes[lib][sample],a)
-#						print new
-						os.rename(old,new)
-						os.remove("sample_%s.rem.%i.fq" %(sample,a))
-						new_file_list.append(os.path.abspath('.')+"/"+new)
-						
-					queries[files_to_barcodes[lib][sample]]['files'] = new_file_list
-			elif len(data)==1:
-				print "data comes in single end - ok"
-				print "currently not supported"
-				sys.exit()
+#			print "renaming results"
+			for sample in files_to_barcodes[lib].keys():
+#				print files_to_barcodes[lib][sample]
+				new_file_list=[]
+				for a in range(1,3):
+					old = "sample_%s.%i.fq" %(sample,a)
+#					print old
+					new = "%s_%i.fastq" %(files_to_barcodes[lib][sample],a)
+#					print new
+					os.rename(old,new)
+					os.remove("sample_%s.rem.%i.fq" %(sample,a))
+					new_file_list.append(os.path.abspath('.')+"/"+new)
+					
+				queries[files_to_barcodes[lib][sample]]['files'] = new_file_list
+		elif len(data)==1:
+			print "data comes in single end - ok"
+			print "currently not supported"
+			sys.exit()
+	os.chdir('../')
+#print queries
 
-		os.chdir('../')
+for queryID in sorted(queries):
 #	print queries
+#	query_count += 1
+	print "\n##### processing query ID: %s #####\n" % (queryID)
+	if not os.path.exists(queryID):
+		os.makedirs(queryID)
 		
+#	print queries[queryID]['files']
+		
+	#determine total read number per sample
+	read_stats[queryID]['total'] = int(0)
+	for f in queries[queryID]['files']:
+		if f.endswith('gz'):
+			t_seqs = list(SeqIO.parse(gzip.open(f, 'rb'),queries[queryID]['format']))
+		else:
+			t_seqs = list(SeqIO.parse(open(f, 'r'),queries[queryID]['format']))
+		read_stats[queryID]['total'] += len(t_seqs)
+		
+#	print "Total number of reads for sample %s: %i" %(queryID, read_stats[queryID][0])
+	os.chdir(queryID)
 
-	for queryID in sorted(queries):
-#		print queries
-#		query_count += 1
-#	for queryID, querydata in sorted(queries.items()): #loop through the query files and read in the current query id and the path to the files
-		print "\n##### processing query ID: %s #####\n" % (queryID)
-		if not os.path.exists(queryID):
-			os.makedirs(queryID)
-		
-#		print queries[queryID]['files']
-		
-		#determine total read number per sample
-		read_stats[queryID]['total'] = int(0)
-		for f in queries[queryID]['files']:
-			if f.endswith('gz'):
-				t_seqs = list(SeqIO.parse(gzip.open(f, 'rb'),queries[queryID]['format']))
-			else:
-				t_seqs = list(SeqIO.parse(open(f, 'r'),queries[queryID]['format']))
-			read_stats[queryID]['total'] += len(t_seqs)
-		
-#		print "Total number of reads for sample %s: %i" %(queryID, read_stats[queryID][0])
+	if (queries[queryID]['format']=="fastq"):
+		print "\n### READ QUALITY TRIMMING ###\n"
+		if len(queries[queryID]['files'])==2:
+			trimmomatic_path="java -jar /usr/bin/trimmomatic-0.32.jar"
+			print "\ntrimming PE reads with trimmomatic"
+			trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i -trimlog trimmomatic.log %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queries[queryID]['files'][1], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
+			trimmed_files=[queryID+'_forward.paired.fastq.gz', queryID+'_forward.singletons.fastq.gz', queryID+'_reverse.paired.fastq.gz', queryID+'_reverse.singletons.fastq.gz']
+		elif len(queries[queryID]['files'])==1:
+			print "\ntrimming SE reads with trimmomatic"
+			trimmomatic_exec= trimmomatic_path+" SE -threads %i -phred%i %s %s_trimmed.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
+			trimmed_files=[queryID+'_trimmed.fastq.gz']
 
-		os.chdir(queryID)
+		trimmomatic="%s" % trimmomatic_exec
+		cmdlist = shlex.split(trimmomatic)
+		cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
+		stdout,stderr = cmd.communicate() #[0]
+		print trimmomatic
+		if args.verbose:
+			print stdout
+		if stderr:
+			print stderr
 
-		if (queries[queryID]['format']=="fastq"):
-			print "\n### READ QUALITY TRIMMING ###\n"
-			if len(queries[queryID]['files'])==2:
-				trimmomatic_path="java -jar /usr/bin/trimmomatic-0.32.jar"
-				print "\ntrimming PE reads with trimmomatic"
-				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i -trimlog trimmomatic.log %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queries[queryID]['files'][1], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
-				trimmed_files=[queryID+'_forward.paired.fastq.gz', queryID+'_forward.singletons.fastq.gz', queryID+'_reverse.paired.fastq.gz', queryID+'_reverse.singletons.fastq.gz']
-			elif len(queries[queryID]['files'])==1:
-				print "\ntrimming SE reads with trimmomatic"
-				trimmomatic_exec= trimmomatic_path+" SE -threads %i -phred%i %s %s_trimmed.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
-				trimmed_files=[queryID+'_trimmed.fastq.gz']
+		if queries[queryID]['crop_bases']:
+			to_clip = trimmed_files[:]
+			print "\n### READ CLIPPING ###\n"
+			for i in range(len(to_clip)):
+				f = to_clip[i]
+				if i > len(queries[queryID]['crop_bases'])/2:
+					c = queries[queryID]['crop_bases'][1]
+				else:
+					c = queries[queryID]['crop_bases'][0]
+					
+                       		if f.endswith('gz'):
+                               		t_seqs = list(SeqIO.parse(gzip.open(f, 'rb'),queries[queryID]['format']))
+                       		else:
+                               		t_seqs = list(SeqIO.parse(open(f, 'r'),queries[queryID]['format']))
+				print "Cropping the first %s bases off reads in file: %s" %(c, f)
+				for j in range(len(t_seqs)):
+					t_seqs[j] = t_seqs[j][c:]
+				
+				OUT=gzip.open(f.replace(queries[queryID]['format'], "headclipped."+queries[queryID]['format']), 'wb')
+				SeqIO.write(t_seqs, OUT, "fastq")
+				OUT.close()
+				trimmed_files[i] = f.replace(queries[queryID]['format'], "headclipped."+queries[queryID]['format']) 
+
+			
+		if args.PCR_primer:
+			temp_primer_out = open("temp_primers.fasta","w")
+			SeqIO.write(primer_versions, temp_primer_out, "fasta")
+			temp_primer_out.close()
+
+			for f in trimmed_files:
+				cmd = "zcat %s | fastx_reverse_complement -Q %i | gzip > %s" %(f, args.phred, f+'.rc.gz')
+				print cmd
+				cmdlist = shlex.split(cmd)
+				cmd = subprocess.call(cmd, shell=True)
+
+			print "\nCLIP PRIMER SEQUENCES\n"
+			trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s temp_forward.paired.fastq.gz temp_forward.singletons.fastq.gz temp_reverse.paired.fastq.gz temp_reverse.singletons.fastq.gz ILLUMINACLIP:temp_primers.fasta:2:5:5 MINLEN:%i" % (args.n_threads, args.phred, trimmed_files[0]+'.rc.gz', trimmed_files[2]+'.rc.gz', args.trim_minlength)
 
 			trimmomatic="%s" % trimmomatic_exec
+			print trimmomatic
 			cmdlist = shlex.split(trimmomatic)
 			cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
 			stdout,stderr = cmd.communicate() #[0]
-			print trimmomatic
 			print stdout
 			print stderr
+
+			cmd = 'zcat *singletons.fastq.gz.rc.gz | gzip > singletons_rc.fastq.gz'
+			print cmd
+			cmdlist = shlex.split(cmd)
+			cmd = subprocess.call(cmd, shell=True)
 			
-			if args.PCR_primer:
-				temp_primer_out = open("temp_primers.fasta","w")
-				SeqIO.write(primer_versions, temp_primer_out, "fasta")
-				temp_primer_out.close()
+			trimmomatic_exec=trimmomatic_path+" SE -threads %i -phred%i singletons_rc.fastq.gz singletons_rc_clipped.fastq.gz ILLUMINACLIP:temp_primers.fasta:2:5:10 MINLEN:%i" % (args.n_threads, args.phred, args.trim_minlength)
 
-				for f in trimmed_files:
-					cmd = "zcat %s | fastx_reverse_complement -Q %i | gzip > %s" %(f, args.phred, f+'.rc.gz')
-					print cmd
-					cmdlist = shlex.split(cmd)
-					cmd = subprocess.call(cmd, shell=True)
-
-				print "\nCLIP PRIMER SEQUENCES\n"
-				trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i %s %s temp_forward.paired.fastq.gz temp_forward.singletons.fastq.gz temp_reverse.paired.fastq.gz temp_reverse.singletons.fastq.gz ILLUMINACLIP:temp_primers.fasta:2:5:5 MINLEN:%i" % (args.n_threads, args.phred, trimmed_files[0]+'.rc.gz', trimmed_files[2]+'.rc.gz', args.trim_minlength)
-
-				trimmomatic="%s" % trimmomatic_exec
-				print trimmomatic
-				cmdlist = shlex.split(trimmomatic)
-				cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
-				stdout,stderr = cmd.communicate() #[0]
-				print stdout
-				print stderr
-
-				cmd = 'zcat *singletons.fastq.gz.rc.gz | gzip > singletons_rc.fastq.gz'
-				print cmd
-				cmdlist = shlex.split(cmd)
-				cmd = subprocess.call(cmd, shell=True)
-				
-				trimmomatic_exec=trimmomatic_path+" SE -threads %i -phred%i singletons_rc.fastq.gz singletons_rc_clipped.fastq.gz ILLUMINACLIP:temp_primers.fasta:2:5:10 MINLEN:%i" % (args.n_threads, args.phred, args.trim_minlength)
-
-				trimmomatic="%s" % trimmomatic_exec
-				print trimmomatic
-				cmdlist = shlex.split(trimmomatic)
-				cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
-				stdout,stderr = cmd.communicate() #[0]
-				print stdout
-				print stderr
+			trimmomatic="%s" % trimmomatic_exec
+			print trimmomatic
+			cmdlist = shlex.split(trimmomatic)
+			cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
+			stdout,stderr = cmd.communicate() #[0]
+			print stdout
+			print stderr
 
 
-				cmd = "zcat temp_forward.paired.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[0])
-				print cmd
-				cmdlist = shlex.split(cmd)
-				cmd = subprocess.call(cmd, shell=True)
+			cmd = "zcat temp_forward.paired.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[0])
+			print cmd
+			cmdlist = shlex.split(cmd)
+			cmd = subprocess.call(cmd, shell=True)
 
-				cmd = "zcat temp_reverse.paired.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[2])
-				print cmd
-				cmdlist = shlex.split(cmd)
-				cmd = subprocess.call(cmd, shell=True)
+			cmd = "zcat temp_reverse.paired.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[2])
+			print cmd
+			cmdlist = shlex.split(cmd)
+			cmd = subprocess.call(cmd, shell=True)
 
-				cmd = "zcat singletons_rc_clipped.fastq.gz temp_forward.singletons.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[1])
-				print cmd
-				cmdlist = shlex.split(cmd)
-				cmd = subprocess.call(cmd, shell=True)
+			cmd = "zcat singletons_rc_clipped.fastq.gz temp_forward.singletons.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[1])
+			print cmd
+			cmdlist = shlex.split(cmd)
+			cmd = subprocess.call(cmd, shell=True)
 
-				cmd = "zcat temp_reverse.singletons.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[3])
-				print cmd
-				cmdlist = shlex.split(cmd)
-				cmd = subprocess.call(cmd, shell=True)
+			cmd = "zcat temp_reverse.singletons.fastq.gz | fastx_reverse_complement -Q %i | gzip > %s" %(args.phred, trimmed_files[3])
+			print cmd
+			cmdlist = shlex.split(cmd)
+			cmd = subprocess.call(cmd, shell=True)
 
-#				for f in queries[queryID]['files']:
-#					cmd = "cat %s | fastx_reverse_complement -Q %i |fastx_clipper -Q %i -n %s | fastx_reverse_complement -Q %i > %s" %(f, args.phred, args.phred, primer_clip_string,  args.phred, f+'.no_primer') 
-#					print cmd
-#					cmdlist = shlex.split(cmd)
-#					cmd = subprocess.call(cmd, shell=True)
-
-			if len(trimmed_files)==4:
-				#determining read counts
-				read_stats[queryID]['trimmed-total'] = int(0)
-				read_stats[queryID]['trimmed-pe'] = int(0)
-				read_stats[queryID]['trimmed-orphans'] = int(0)
-				for s in trimmed_files:
-					t_seqs = list(SeqIO.parse(gzip.open(s,'rb'),'fastq'))
-					read_stats[queryID]['trimmed-total'] += len(t_seqs)
-					if 'paired' in s:
-						read_stats[queryID]['trimmed-pe'] += len(t_seqs)
-						
-					elif 'singleton' in s:				
-						read_stats[queryID]['trimmed-orphans'] += len(t_seqs)
-
-
-
-				if args.merge:
-					print "\n### MERGING READ PAIRS ###\n"
-					print "merging paired-end reads with flash\n"
-					cmd="flash %s %s %s -t %i -p %i -o %s -z" % ( trimmed_files[0], trimmed_files[2], args.product_length, args.n_threads, args.phred, queryID)
-					print cmd
-					cmdlist = shlex.split(cmd)
-					cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
-					stdout,stderr = cmd.communicate() #[0]
-					print stdout
-					print stderr
-					trimmed_files[0]= queryID+'.notCombined_1.fastq.gz'
-					trimmed_files[2]= queryID+'.notCombined_2.fastq.gz'
-					trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
-
-					#change names of extended reads
-					ext_seqs=[]
-					t_seqs = list(SeqIO.parse(gzip.open(queryID+'.extendedFrags.fastq.gz', 'rb'),'fastq'))
-					read_stats[queryID]['merged'] = 2*len(t_seqs)
-					for record in t_seqs:
-						record.id = record.id+"_ex"
-						record.description = record.id
-						ext_seqs.append(record)
-					
-					ex_out = gzip.open("ex_temp.fastq.gz","wb")
-					SeqIO.write(ext_seqs, ex_out, "fastq")
-					ex_out.close()
-					os.rename("ex_temp.fastq.gz", queryID+'.extendedFrags.fastq.gz')						
-				
-#				print read_stats
-
-				print "\n### Fastq to fasta (plus filtering for length, merged-only, etc. if applicable) ###\n"
-
-				if args.merged_only:
-					print "\nkeeping only merged reads for subsequent analyses"
-					keep_only(inlist=trimmed_files, pattern_list=['.extendedFrags.fastq.gz'])
-
-				if args.forward_only:
-					print "\nkeeping only forward sequences (non merged forward and merged reads) for subsequent analyses"
-					keep_only(inlist=trimmed_files, pattern_list=['.extendedFrags.fastq.gz', '_forward', 'notCombined_1'])
-			
-				survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=queryID+'_excluded.fasta', form='fasta', length=args.length_filter, devi=args.length_deviation)
-				print "\n%i sequences survived filtering\n" %survived
-#				sys.exit()
-
-
-#				files = " ".join(trimmed_files[-2:])
-#				cmd="zcat %s | fastx_reverse_complement -Q %i| fastq_to_fasta -Q %i > temp2.fasta" % (files, args.phred, args.phred)
-##				print cmd
-#				cmdlist = shlex.split(cmd)
-#				cmd = subprocess.call(cmd, shell=True)
-#				
-#				files = " ".join(trimmed_files[:-2])
-#				cmd="zcat %s | fastq_to_fasta -Q %i > temp1.fasta" % (files, args.phred)
-##				print cmd
-#				cmdlist = shlex.split(cmd)
-#				cmd = subprocess.call(cmd, shell=True)
-#
-#				cmd="cat temp1.fasta temp2.fasta > temp_trimmed.fasta"
-##				print cmd
-#				cmdlist = shlex.split(cmd)
-#				cmd = subprocess.call(cmd, shell=True)
-#				
-#				os.remove("temp1.fasta")
-#				os.remove("temp2.fasta")
-			else:
-				survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=False, form='fasta', length=0)
-#				cmd="zcat %s | fastq_to_fasta > temp_trimmed.fasta" % trimmed_files[0]
+#			for f in queries[queryID]['files']:
+#				cmd = "cat %s | fastx_reverse_complement -Q %i |fastx_clipper -Q %i -n %s | fastx_reverse_complement -Q %i > %s" %(f, args.phred, args.phred, primer_clip_string,  args.phred, f+'.no_primer') 
 #				print cmd
 #				cmdlist = shlex.split(cmd)
 #				cmd = subprocess.call(cmd, shell=True)
-				
-				#determine the number of reads surviving trimming
-#				t_seqs = list(SeqIO.parse('temp_trimmed.fasta','fasta'))
-#				read_stats['description'].append('trimmed-total')
-#				read_stats[queryID]['trimmed-total'] = survived
 
-#			fin=open("temp_trimmed.fasta","r")
-#			f_out=open(queryID+'_trimmed.fasta',"w")
-#			for line in fin:
-#				f_out.write(line.replace(" ","_"))
-				
-#			fin.close()
-#			f_out.close()
+		if len(trimmed_files)==4:
+			#determining read counts
+			read_stats[queryID]['trimmed-total'] = int(0)
+			read_stats[queryID]['trimmed-pe'] = int(0)
+			read_stats[queryID]['trimmed-orphans'] = int(0)
+			for s in trimmed_files:
+				t_seqs = list(SeqIO.parse(gzip.open(s,'rb'),'fastq'))
+				read_stats[queryID]['trimmed-total'] += len(t_seqs)
+				if 'paired' in s:
+					read_stats[queryID]['trimmed-pe'] += len(t_seqs)
+					
+				elif 'singleton' in s:				
+					read_stats[queryID]['trimmed-orphans'] += len(t_seqs)
 
-			#cleanup
-			cont = os.listdir(".")
-			to_remove = []
-			for f in cont:
-				if f.startswith('temp'):
-					to_remove.append(f)
+
+
+			if args.merge:
+				print "\n### MERGING READ PAIRS ###\n"
+				print "merging paired-end reads with flash\n"
+				cmd="flash %s %s %s -t %i -p %i -o %s -z" % ( trimmed_files[0], trimmed_files[2], args.product_length, args.n_threads, args.phred, queryID)
+				print cmd
+				cmdlist = shlex.split(cmd)
+				cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)	
+				stdout,stderr = cmd.communicate() #[0]
+				print stdout
+				print stderr
+				trimmed_files[0]= queryID+'.notCombined_1.fastq.gz'
+				trimmed_files[2]= queryID+'.notCombined_2.fastq.gz'
+				trimmed_files.insert(0, queryID+'.extendedFrags.fastq.gz')
+
+				#change names of extended reads
+				ext_seqs=[]
+				t_seqs = list(SeqIO.parse(gzip.open(queryID+'.extendedFrags.fastq.gz', 'rb'),'fastq'))
+				read_stats[queryID]['merged'] = 2*len(t_seqs)
+				for record in t_seqs:
+					record.id = record.id+"_ex"
+					record.description = record.id
+					ext_seqs.append(record)
+					
+				ex_out = gzip.open("ex_temp.fastq.gz","wb")
+				SeqIO.write(ext_seqs, ex_out, "fastq")
+				ex_out.close()
+				os.rename("ex_temp.fastq.gz", queryID+'.extendedFrags.fastq.gz')						
 				
-				if f.endswith('.gz.rc.gz') or f.endswith('_rc_clipped.fastq.gz') or f.endswith('_rc.fastq.gz'):
-					to_remove.append(f)
-				
-			for f in to_remove:
-				os.remove(f) #trimmed.fasta")
+#			print read_stats
+			print "\n### Fastq to fasta (plus filtering for length, merged-only, etc. if applicable) ###\n"
+
+			if args.merged_only:
+				print "\nkeeping only merged reads for subsequent analyses"
+				keep_only(inlist=trimmed_files, pattern_list=['.extendedFrags.fastq.gz'])
+
+			if args.forward_only:
+				print "\nkeeping only forward sequences (non merged forward and merged reads) for subsequent analyses"
+				keep_only(inlist=trimmed_files, pattern_list=['.extendedFrags.fastq.gz', '_forward', 'notCombined_1'])
 			
-
-			queryfile=os.path.abspath('.')+"/"+queryID+'_trimmed.fasta'
+			survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=queryID+'_excluded.fasta', form='fasta', length=args.length_filter, devi=args.length_deviation)
+			print "\n%i sequences survived filtering\n" %survived
 
 		else:
-			queryfile = queries[queryID]['files'][0]
-			print "\nWARNING - EXPECTING input data to come in SINGLE FASTA FILE\n"
+			survived = concat_and_filter_by_length(inlist=trimmed_files, outfile=queryID+'_trimmed.fasta', excludefile=False, form='fasta', length=0)
+
+		#cleanup
+		cont = os.listdir(".")
+		to_remove = []
+		for f in cont:
+			if f.startswith('temp'):
+				to_remove.append(f)
+			
+			if f.endswith('.gz.rc.gz') or f.endswith('_rc_clipped.fastq.gz') or f.endswith('_rc.fastq.gz'):
+				to_remove.append(f)
+			
+		for f in to_remove:
+			os.remove(f) #trimmed.fasta")
+			
+
+		queryfile=os.path.abspath('.')+"/"+queryID+'_trimmed.fasta'
+
+	elif queries[queryID]['format']=="fasta":
+		queryfile = queries[queryID]['files'][0]
+		print "\nWARNING - EXPECTING input data to come in SINGLE FASTA FILE\n"
 
 
 		#getting number of sequences to be queried		
-		total_queries = len(list(SeqIO.parse(queryfile,'fasta')))
+	total_queries = len(list(SeqIO.parse(queryfile,'fasta')))
 
-		if args.cluster:
-			##running clustering
-			print "\n### CLUSTERING ###\n"
-			print "\nclustering using vsearch"
-			vsearch_cluster(infile=queryfile, cluster_match=args.clust_match, threads=args.n_threads, sampleID=queryID)
+	if args.cluster:
+		##running clustering
+		print "\n### CLUSTERING ###\n"
+		print "\nclustering using vsearch"
+		vsearch_cluster(infile=queryfile, cluster_match=args.clust_match, threads=args.n_threads, sampleID=queryID)
 	
-			#read in the results from the clustering, i.e. number of reads per cluster, later I could read in the actual read ids to allow for retrievel of reads assigned to a given taxon
-#			all_clust_count = int(0)
+		#read in the results from the clustering, i.e. number of reads per cluster, later I could read in the actual read ids to allow for retrievel of reads assigned to a given taxon
+#		all_clust_count = int(0)
 			
-			print "\nparse vsearch uc file\n"
-			cluster_counts = {}
-			cluster_reads = defaultdict(list)
-			parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
+		print "\nparse vsearch uc file\n"
+		cluster_counts = {}
+		cluster_reads = defaultdict(list)
+		parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
 			
-#			print cluster_reads.keys()
+#		print cluster_reads.keys()
 
-#			total_queries = querycount[queryID]
-			total_clusters = len(cluster_counts)
-			
-			if args.clust_cov>1:
-				print "\nreduce cluster files\n"
-			querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts, sampleID=queryID, v=args.verbose)		
-#			for ID in unknown_seqs_dict.keys():
-#				if cluster_counts.has_key(ID):
-#					unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-##				print unknown_seqs_dict[ID].description
-
-			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (representing %i sequences) passed the filter criteria (minimum of %i sequences per cluster) and will be used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), querycount[queryID], args.clust_cov)
+#		total_queries = querycount[queryID]
+		total_clusters = len(cluster_counts)
 		
-			read_stats[queryID]['clusters_total'] = total_clusters
-			read_stats[queryID]['cluster_thres'] = args.clust_match
-			read_stats[queryID]['clusters_min_cov'] = args.clust_cov
-			read_stats[queryID]['cluster_above_thres'] = len(cluster_counts)
-			read_stats[queryID]['queries'] = querycount[queryID]
-
-			queryfile = os.path.abspath('.')+"/"+"%s_centroids.fasta" %queryID #"../%s_centroids.fasta" % queryID
-
-			unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
-			for ID in unknown_seqs_dict.keys():
-                                if cluster_counts.has_key(ID):
-                                        unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-#                               print unknown_seqs_dict[ID].description
-
-			queries[queryID]['uc'] = os.path.abspath('.')+"/"+queryID+'.uc'
-
-		else:
-			unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta')) #read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
-			querycount[queryID] += len(unknown_seqs_dict)
-			print "The queryfile contains %i query sequences.\n" %querycount[queryID]
-		
-			cluster_counts = {}
-			cluster_reads = defaultdict(list)
-
-			for ID in unknown_seqs_dict.keys():
-#				print sequence
-				cluster_counts[unknown_seqs_dict[ID].description] = 1
-				cluster_reads[unknown_seqs_dict[ID].description] = [unknown_seqs_dict[ID].description]
+		if args.clust_cov>1:
+			print "\nreduce cluster files\n"
+		querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts, sampleID=queryID, v=args.verbose)		
+#		for ID in unknown_seqs_dict.keys():
+#			if cluster_counts.has_key(ID):
 #				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-			read_stats[queryID]['queries'] = querycount[queryID]
+##			print unknown_seqs_dict[ID].description
+
+		print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (representing %i sequences) passed the filter criteria (minimum of %i sequences per cluster) and will be used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), querycount[queryID], args.clust_cov)
+		
+		read_stats[queryID]['clusters_total'] = total_clusters
+		read_stats[queryID]['cluster_thres'] = args.clust_match
+		read_stats[queryID]['clusters_min_cov'] = args.clust_cov
+		read_stats[queryID]['cluster_above_thres'] = len(cluster_counts)
+		read_stats[queryID]['queries'] = querycount[queryID]
+
+		queryfile = os.path.abspath('.')+"/"+"%s_centroids.fasta" %queryID #"../%s_centroids.fasta" % queryID
+
+		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
+		for ID in unknown_seqs_dict.keys():
+                	if cluster_counts.has_key(ID):
+                        	unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+#                       print unknown_seqs_dict[ID].description
+
+		queries[queryID]['uc'] = os.path.abspath('.')+"/"+queryID+'.uc'
+
+	else:
+		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta')) #read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
+		querycount[queryID] += len(unknown_seqs_dict)
+		print "The queryfile contains %i query sequences.\n" %querycount[queryID]
+		
+		cluster_counts = {}
+		cluster_reads = defaultdict(list)
+
+		for ID in unknown_seqs_dict.keys():
+#			print sequence
+			cluster_counts[unknown_seqs_dict[ID].description] = 1
+			cluster_reads[unknown_seqs_dict[ID].description] = [unknown_seqs_dict[ID].description]
+#			unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+			unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+		read_stats[queryID]['queries'] = querycount[queryID]
 
 
-		print "WRITING BASIC READ STATS TO FILE\n"
-		read_counts_out = open("../"+args.output_prefix+"_read_stats.csv","a")
-		outstring = queryID
-		for m in read_metrics:
-			if read_stats[queryID].has_key(m):
-				outstring += ','+str(read_stats[queryID][m])
-			else:
-				outstring += ',NA'
-		read_counts_out.write(outstring+"\n")
-		read_counts_out.close()
+	print "WRITING BASIC READ STATS TO FILE\n"
+	read_counts_out = open("../"+args.output_prefix+"_read_stats.csv","a")
+	outstring = queryID
+	for m in read_metrics:
+		if read_stats[queryID].has_key(m):
+			outstring += ','+str(read_stats[queryID][m])
+		else:
+			outstring += ',NA'
+	read_counts_out.write(outstring+"\n")
+	read_counts_out.close()
 
-		queries[queryID]['queryfile'] = queryfile
-		queries[queryID]['cluster_counts'] = dict(cluster_counts)
-		queries[queryID]['cluster_reads'] = dict(cluster_reads)
-#		print "\n%s\n" %queries[queryID]
+	queries[queryID]['queryfile'] = queryfile
+	queries[queryID]['cluster_counts'] = dict(cluster_counts)
+	queries[queryID]['cluster_reads'] = dict(cluster_reads)
+#	print "\n%s\n" %queries[queryID]
 	
-		os.chdir('../') #leave directory for query
+	os.chdir('../') #leave directory for query
 
 
 ############
+
+cluster_check = 0
+for q in queries.keys():
+	if 'cluster_counts' in queries[queryID]:
+		cluster_check+=1
+
+if not cluster_check == len(queries):
+	print "\nAborted before global clustering\n"
+	sys.exit()
+
+print "\n### GLOBAL CLUSTERING ###\n"
+
+
 if not os.path.exists('GLOBAL'):
 	os.makedirs('GLOBAL')
 os.chdir('GLOBAL')
@@ -1765,6 +1785,8 @@ global_cluster_reads = defaultdict(list)
 parse_vsearch_uc(fil=global_uc, cluster_counts=global_cluster_counts, extract_reads=True, cluster_reads=global_cluster_reads)
 
 BIOM_tables['OTU_denovo'] = global_uc_to_biom(clust_dict=global_cluster_reads, query_dict=queries)
+
+print "\nwriting denovo OTU table\n"
 
 out=open(args.output_prefix+"-OTU-denovo.biom","w")
 BIOM_tables['OTU_denovo'].to_json('metaBEAT v.'+VERSION, direct_io=out)
