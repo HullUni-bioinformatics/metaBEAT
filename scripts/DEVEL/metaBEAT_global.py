@@ -29,7 +29,7 @@ import os.path
 from os import rename
 from collections import defaultdict
 import shlex, subprocess
-
+import shutil
 
 
 ##############set this, or put a file called taxonomy.db in the same directory as the metaBEAT.py script############
@@ -38,7 +38,7 @@ taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 #############################################################################
 VERSION="0.9-global-c2"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
-informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq'}
+informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
 all_seqs = []
 skipped_ref_seqs = [] #defaultdict(list)
@@ -132,6 +132,13 @@ if len(sys.argv) < 2:	#if the script is called without any arguments display the
 
 
 ###FUNCTIONS
+
+#def parse_BIOM_denovo():
+
+	#parse biom
+	#check if there is a 'uc' file - if yes add queries[queryID]['format'] = 'uc' -> this will then check if the '*_queries.fasta' file is there.
+	#if not check if there is *_queries.fasta file for the sample, if yes add queries[queryID]['format'] = 'fasta' and queries[queryID]['files'] = *_queries.fasta
+	
 
 def add_taxonomy_to_biom(per_tax_level_clusters, per_tax_level_trees, biom_in):
 
@@ -1066,7 +1073,7 @@ if args.querylist:
 
 	if args.PCR_primer and crops:
 		print "\ncurrently you are requesting both PCR primer removal AND sequence clipping at the same time - note that sequences will be clipped first so primer removal may be redundant\n"
-		sys.exit()
+#		sys.exit()
 
 
 	if args.PCR_primer:
@@ -1457,19 +1464,20 @@ for queryID in sorted(queries):
 		
 #	print queries[queryID]['files']
 		
-	#determine total read number per sample
-	read_stats[queryID]['total'] = int(0)
-	for f in queries[queryID]['files']:
-		if f.endswith('gz'):
-			t_seqs = list(SeqIO.parse(gzip.open(f, 'rb'),queries[queryID]['format']))
-		else:
-			t_seqs = list(SeqIO.parse(open(f, 'r'),queries[queryID]['format']))
-		read_stats[queryID]['total'] += len(t_seqs)
-		
-#	print "Total number of reads for sample %s: %i" %(queryID, read_stats[queryID][0])
 	os.chdir(queryID)
 
 	if (queries[queryID]['format']=="fastq"):
+		#determine total read number per sample
+		read_stats[queryID]['total'] = int(0)
+		for f in queries[queryID]['files']:
+			if f.endswith('gz'):
+				t_seqs = list(SeqIO.parse(gzip.open(f, 'rb'),queries[queryID]['format']))
+			else:
+				t_seqs = list(SeqIO.parse(open(f, 'r'),queries[queryID]['format']))
+			read_stats[queryID]['total'] += len(t_seqs)
+		
+#		print "Total number of reads for sample %s: %i" %(queryID, read_stats[queryID][0])
+
 		print "\n### READ QUALITY TRIMMING ###\n"
 		if len(queries[queryID]['files'])==2:
 			trimmomatic_path="java -jar /usr/bin/trimmomatic-0.32.jar"
@@ -1491,7 +1499,7 @@ for queryID in sorted(queries):
 		if stderr:
 			print stderr
 
-		if queries[queryID]['crop_bases']:
+		if 'crop_bases' in queries[queryID]:
 			to_clip = trimmed_files[:]
 			print "\n### READ CLIPPING ###\n"
 			for i in range(len(to_clip)):
@@ -1662,52 +1670,72 @@ for queryID in sorted(queries):
 
 
 		#getting number of sequences to be queried		
+
+	elif queries[queryID]['format'] == "uc":
+		print("\nprovided uc file as input - expecting to find the file: "+queryID+"_queries.fasta - checking .. "),
+		if os.path.exists(queryID+'_queries.fasta'):
+			print "ok!"
+			queryfile = os.path.abspath('.')+"/"+queryID+"_queries.fasta"
+			queries[queryID]['uc'] = os.path.abspath('.')+"/"+queryID+".uc"
+
 	total_queries = len(list(SeqIO.parse(queryfile,'fasta')))
 
-	if args.cluster:
-		##running clustering
-		print "\n### CLUSTERING ###\n"
-		print "\nclustering using vsearch"
-		vsearch_cluster(infile=queryfile, cluster_match=args.clust_match, threads=args.n_threads, sampleID=queryID)
-	
-		#read in the results from the clustering, i.e. number of reads per cluster, later I could read in the actual read ids to allow for retrievel of reads assigned to a given taxon
-#		all_clust_count = int(0)
-			
-		print "\nparse vsearch uc file\n"
-		cluster_counts = {}
-		cluster_reads = defaultdict(list)
-		parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
-			
-#		print cluster_reads.keys()
+	if args.cluster or 'uc' in queries[queryID]['format']:
 
-#		total_queries = querycount[queryID]
-		total_clusters = len(cluster_counts)
+		print "\n### CLUSTERING ###\n"
+
+		if args.cluster:
+			##running clustering
+			print "\nclustering using vsearch"
+			vsearch_cluster(infile=queryfile, cluster_match=args.clust_match, threads=args.n_threads, sampleID=queryID)
 		
-		if args.clust_cov>1:
-			print "\nreduce cluster files\n"
-		querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryID+'_centroids.fasta', m_cluster_size=args.clust_cov, cluster_counts=cluster_counts, sampleID=queryID, v=args.verbose)		
+			queries[queryID]['uc'] = os.path.abspath('.')+"/"+queryID+'.uc'
+			queryfile = os.path.abspath('.')+"/"+"%s_centroids.fasta" %queryID #"../%s_centroids.fasta" % queryID
+	
+			#read in the results from the clustering, i.e. number of reads per cluster, later I could read in the actual read ids to allow for retrievel of reads assigned to a given taxon
+#			all_clust_count = int(0)
+		else:
+			print "using existing clustering result: %s" %queries[queryID]['uc']
+
+
+		if queries[queryID]['uc']:
+	
+			print "\nparse vsearch uc file\n"
+			cluster_counts = {}
+			cluster_reads = defaultdict(list)
+			parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
+
+			
+#			print cluster_reads.keys()
+	
+#			total_queries = querycount[queryID]
+			total_clusters = len(cluster_counts)
+		
+			if args.clust_cov>1:
+				print "\nreduce cluster files - minimum coverage: %s\n" %args.clust_cov
+				querycount[queryID] = filter_centroid_fasta(centroid_fasta=queryfile, m_cluster_size=args.clust_cov, cluster_counts=cluster_counts, sampleID=queryID, v=args.verbose)		
 #		for ID in unknown_seqs_dict.keys():
 #			if cluster_counts.has_key(ID):
 #				unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
 ##			print unknown_seqs_dict[ID].description
 
-		print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (representing %i sequences) passed the filter criteria (minimum of %i sequences per cluster) and will be used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), querycount[queryID], args.clust_cov)
+			unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
+			if not querycount[queryID]:
+				querycount[queryID] = len(unknown_seqs_dict)
+			for ID in unknown_seqs_dict.keys():
+	                	if cluster_counts.has_key(ID):
+	                        	unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
+#	                       print unknown_seqs_dict[ID].description
+
+			print "vsearch processed %i sequences and identified %i clusters (clustering threshold %.2f) - %i clusters (representing %i sequences) passed the filter criteria (minimum of %i sequences per cluster) and will be used in subsequent analyses\n" % (total_queries, total_clusters, float(args.clust_match), len(cluster_counts), querycount[queryID], args.clust_cov)
 		
-		read_stats[queryID]['clusters_total'] = total_clusters
-		read_stats[queryID]['cluster_thres'] = args.clust_match
-		read_stats[queryID]['clusters_min_cov'] = args.clust_cov
-		read_stats[queryID]['cluster_above_thres'] = len(cluster_counts)
-		read_stats[queryID]['queries'] = querycount[queryID]
+			read_stats[queryID]['clusters_total'] = total_clusters
+			read_stats[queryID]['cluster_thres'] = args.clust_match
+			read_stats[queryID]['clusters_min_cov'] = args.clust_cov
+			read_stats[queryID]['cluster_above_thres'] = len(cluster_counts)
+			read_stats[queryID]['queries'] = querycount[queryID]
 
-		queryfile = os.path.abspath('.')+"/"+"%s_centroids.fasta" %queryID #"../%s_centroids.fasta" % queryID
 
-		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta'))
-		for ID in unknown_seqs_dict.keys():
-                	if cluster_counts.has_key(ID):
-                        	unknown_seqs_dict[ID].description = "%s|%s|%s|%.2f" %(queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-#                       print unknown_seqs_dict[ID].description
-
-		queries[queryID]['uc'] = os.path.abspath('.')+"/"+queryID+'.uc'
 
 	else:
 		unknown_seqs_dict = SeqIO.to_dict(SeqIO.parse(queryfile,'fasta')) #read in query sequences, atm only fasta format is supported. later I will check at this stage if there are already sequences in memory from prior quality filtering
@@ -1726,6 +1754,17 @@ for queryID in sorted(queries):
 		read_stats[queryID]['queries'] = querycount[queryID]
 
 
+	if not queryfile.split("/")[-1] == queryID+'_queries.fasta':  
+		shutil.copy(queryfile, queryID+'_queries.fasta')
+	queryfile = os.path.abspath('.')+"/"+queryID+'_queries.fasta' 
+
+
+	queries[queryID]['queryfile'] = queryfile
+	queries[queryID]['cluster_counts'] = dict(cluster_counts)
+	queries[queryID]['cluster_reads'] = dict(cluster_reads)
+#	print "\n%s\n" %queries[queryID]
+	
+
 	print "WRITING BASIC READ STATS TO FILE\n"
 	read_counts_out = open("../"+args.output_prefix+"_read_stats.csv","a")
 	outstring = queryID
@@ -1737,11 +1776,6 @@ for queryID in sorted(queries):
 	read_counts_out.write(outstring+"\n")
 	read_counts_out.close()
 
-	queries[queryID]['queryfile'] = queryfile
-	queries[queryID]['cluster_counts'] = dict(cluster_counts)
-	queries[queryID]['cluster_reads'] = dict(cluster_reads)
-#	print "\n%s\n" %queries[queryID]
-	
 	os.chdir('../') #leave directory for query
 
 
