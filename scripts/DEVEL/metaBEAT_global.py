@@ -89,6 +89,7 @@ query_group.add_argument("--trim_adapter", help="trim adapters provided in file"
 query_group.add_argument("--trim_qual", help="minimum phred quality score (default: 30)", metavar="<INT>", type=int, action="store", default=30)
 query_group.add_argument("--phred", help="phred quality score offset - 33 or 64 (default: 33)", metavar="<INT>", type=int, action="store", default=33)
 query_group.add_argument("--trim_window", help="sliding window size (default: 5) for trimming; if average quality drops below the specified minimum quality all subsequent bases are removed from the reads", metavar="<INT>", type=int, action="store", default=5)
+query_group.add_argument("--read_crop", help="Crop reads to this length if they are longer than that (default: off)", metavar="<INT>", type=int, action="store", default=0)
 query_group.add_argument("--trim_minlength", help="minimum length of reads to be retained after trimming (default: 50)", metavar="<INT>", type=int, action="store", default=50)
 query_group.add_argument("--merge", help="attempt to merge paired-end reads", action="store_true")
 query_group.add_argument("--product_length", help="estimated length of PCR product (specifying this option increases merging efficiency)", metavar="<INT>", type=int, action="store")#, default=100)
@@ -947,6 +948,12 @@ if args.email:
 	Entrez.email = args.email
 Entrez.email = check_email(mail = Entrez.email)#mail=Entrez.email)	
 
+if args.read_crop:
+	args.read_crop = " CROP:%s" %args.read_crop
+else:
+	args.read_crop = ""
+
+
 if args.blast or args.phyloplace:
 	taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
 
@@ -1483,11 +1490,11 @@ for queryID in sorted(queries):
 		if len(queries[queryID]['files'])==2:
 			trimmomatic_path="java -jar /usr/bin/trimmomatic-0.32.jar"
 			print "\ntrimming PE reads with trimmomatic"
-			trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i -trimlog trimmomatic.log %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queries[queryID]['files'][1], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
+			trimmomatic_exec=trimmomatic_path+" PE -threads %i -phred%i -trimlog trimmomatic.log %s %s %s_forward.paired.fastq.gz %s_forward.singletons.fastq.gz %s_reverse.paired.fastq.gz %s_reverse.singletons.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i%s MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queries[queryID]['files'][1], queryID, queryID, queryID, queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.read_crop, args.trim_minlength)
 			trimmed_files=[queryID+'_forward.paired.fastq.gz', queryID+'_forward.singletons.fastq.gz', queryID+'_reverse.paired.fastq.gz', queryID+'_reverse.singletons.fastq.gz']
 		elif len(queries[queryID]['files'])==1:
 			print "\ntrimming SE reads with trimmomatic"
-			trimmomatic_exec= trimmomatic_path+" SE -threads %i -phred%i %s %s_trimmed.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.trim_minlength)
+			trimmomatic_exec= trimmomatic_path+" SE -threads %i -phred%i %s %s_trimmed.fastq.gz ILLUMINACLIP:%s:5:5:5 TRAILING:%i LEADING:%i SLIDINGWINDOW:%i:%i%s MINLEN:%i" % (args.n_threads, args.phred, queries[queryID]['files'][0], queryID, args.trim_adapter, args.trim_qual, args.trim_qual, args.trim_window, args.trim_qual, args.read_crop, args.trim_minlength)
 			trimmed_files=[queryID+'_trimmed.fastq.gz']
 
 		trimmomatic="%s" % trimmomatic_exec
