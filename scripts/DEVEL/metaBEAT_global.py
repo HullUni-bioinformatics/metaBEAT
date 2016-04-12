@@ -100,14 +100,15 @@ reference_group = parser.add_argument_group('Reference', 'The parameters in this
 reference_group.add_argument("-R", "--REFlist", help="file containing a list of files to be used as reference sequences", metavar="<FILE>", action="store")
 reference_group.add_argument("--gb_out", help="output the corrected gb file", metavar="<FILE>", action="store", default="")
 reference_group.add_argument("--rec_check", help="check records to be used as reference", action="store_true")
-reference_group.add_argument("--blast_db", help="path to precompiled blast database", metavar="<PATH>", action="store", default="")
 reference_group.add_argument("--gi_to_taxid", help="comma delimited file containing 'gi accession,taxid' for a list of taxa", metavar="<FILE>", action="store", default=os.getcwd()+"/gi_to_taxid.csv")
 cluster_group = parser.add_argument_group('Query clustering options', 'The parameters in this group affect read clustering')
 cluster_group.add_argument("--cluster", help="perform clustering of query sequences using vsearch", action="store_true")
 cluster_group.add_argument("--clust_match", help="identity threshold for clustering in percent (default: 1)", type=float, metavar="<FLOAT>", action="store", default="1")
 cluster_group.add_argument("--clust_cov", help="minimum number of records in cluster (default: 1)", type=int, metavar="<INT>", action="store", default="1")
 blast_group = parser.add_argument_group('BLAST search', 'The parameters in this group affect BLAST search and BLAST based taxonomic assignment')
-blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
+blast_group.add_argument("--blast_db", help="path to precompiled blast database", metavar="<PATH>", action="store", default="")
+blast_group.add_argument("--blast_xml", help="path to Blast result in xml format", metavar="<PATH>", action="store", default="")
+#blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.80)", type=float, metavar="<FLOAT>", action="store", default="0.80")
 blast_group.add_argument("--min_ali_length", help="minimum alignment length in percent of total query length (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
@@ -1781,54 +1782,62 @@ for queryID in sorted(queries):
 
 ############
 
-cluster_check = 0
-for q in queries.keys():
-	if 'cluster_counts' in queries[queryID]:
-		cluster_check+=1
-
-if not cluster_check == len(queries):
-	print "\nAborted before global clustering\n"
-	sys.exit()
-
-print "\n### GLOBAL CLUSTERING ###\n"
+#parse_BIOM_denovo #should go to the start before anything else starts and throw and error in case somethings wrong
 
 
-if not os.path.exists('GLOBAL'):
-	os.makedirs('GLOBAL')
-os.chdir('GLOBAL')
+if not 'BIOM_denovo' in BIOM_tables:
 
-global_queries = os.getcwd()+'/global_queries.fasta'
-global_centroids = os.getcwd()+'/global_centroids.fasta'
-global_uc = os.getcwd()+'/global.uc'
+	cluster_check = 0
+	for q in queries.keys():
+		if 'cluster_counts' in queries[queryID]:
+			cluster_check+=1
 
-#print global_queries
+	if not cluster_check == len(queries):
+		print "\nAborted before global clustering\n"
+		sys.exit()
 
-print "\nConcatenating for global clustering\n"
-concatenate_for_global_clustering(queries_dict=queries, out=global_queries)
+	if not os.path.exists('GLOBAL'):
+		os.makedirs('GLOBAL')
+	os.chdir('GLOBAL')
 
-print "\nPerforming global clustering\n"
-vsearch_cluster(infile=global_queries, cluster_match=args.clust_match, threads=args.n_threads, sampleID='global')
+	print "\n### GLOBAL CLUSTERING ###\n"
 
-global_cluster_count=0
-for i in SeqIO.parse(open(global_centroids), 'fasta'):
-	global_cluster_count += 1
+	global_queries = os.getcwd()+'/global_queries.fasta'
+	global_centroids = os.getcwd()+'/global_centroids.fasta'
+	global_uc = os.getcwd()+'/global.uc'
 
-print "\nparse vsearch uc file\n"
-global_cluster_counts = {}
-global_cluster_reads = defaultdict(list)
-parse_vsearch_uc(fil=global_uc, cluster_counts=global_cluster_counts, extract_reads=True, cluster_reads=global_cluster_reads)
+	#print global_queries
 
-BIOM_tables['OTU_denovo'] = global_uc_to_biom(clust_dict=global_cluster_reads, query_dict=queries)
+	print "\nConcatenating for global clustering\n"
+	concatenate_for_global_clustering(queries_dict=queries, out=global_queries)
 
-print "\nwriting denovo OTU table\n"
+	print "\nPerforming global clustering\n"
+	vsearch_cluster(infile=global_queries, cluster_match=args.clust_match, threads=args.n_threads, sampleID='global')
 
-out=open(args.output_prefix+"-OTU-denovo.biom","w")
-BIOM_tables['OTU_denovo'].to_json('metaBEAT v.'+VERSION, direct_io=out)
-out.close()
+	global_cluster_count=0
+	for i in SeqIO.parse(open(global_centroids), 'fasta'):
+		global_cluster_count += 1
 
-out=open(args.output_prefix+"-OTU-denovo.tsv","w")
-out.write(BIOM_tables['OTU_denovo'].to_tsv()) #to_json('generaged by test', direct_io=out)
-out.close()
+	print "\nparse vsearch uc file\n"
+	global_cluster_counts = {}
+	global_cluster_reads = defaultdict(list)
+	parse_vsearch_uc(fil=global_uc, cluster_counts=global_cluster_counts, extract_reads=True, cluster_reads=global_cluster_reads)
+
+	BIOM_tables['OTU_denovo'] = global_uc_to_biom(clust_dict=global_cluster_reads, query_dict=queries)
+
+	print "\nwriting denovo OTU table\n"
+
+	out=open(args.output_prefix+"-OTU-denovo.biom","w")
+	BIOM_tables['OTU_denovo'].to_json('metaBEAT v.'+VERSION, direct_io=out)
+	out.close()
+
+	out=open(args.output_prefix+"-OTU-denovo.tsv","w")
+	out.write(BIOM_tables['OTU_denovo'].to_tsv()) #to_json('generaged by test', direct_io=out)
+	out.close()
+else:
+	if not os.path.exists('GLOBAL'):
+		os.makedirs('GLOBAL')
+	os.chdir('GLOBAL')
 
 
 if args.blast or args.phyloplace:
@@ -1843,21 +1852,22 @@ if args.blast or args.phyloplace:
 			if not os.path.exists('BLAST_'+str(args.min_ident)):
 				os.makedirs('BLAST_'+str(args.min_ident))
 			os.chdir('BLAST_'+str(args.min_ident))
-			print "\n### RUNNING BLAST ###\n"
 
-			print "running blast search against database %s" % blast_db
-			blast_out = "global_blastn.out.xml"# % (args.marker, queryID)
-			blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (global_centroids, blast_db, blast_out, args.n_threads) 
-			print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
+			if not args.blast_xml:
+				print "\n### RUNNING BLAST ###\n"
 
-#			blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
-#			cmdlist = shlex.split(blast_cmd)
-#			stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
+				print "running blast search against database %s" % blast_db
+				blast_out = "global_blastn.out.xml"# % (args.marker, queryID)
+				blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (global_centroids, blast_db, blast_out, args.n_threads) 
+				print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
 
-			blast_handle = NcbiblastxCommandline(cmd='blastn', query=global_centroids, db=blast_db, evalue=1e-20, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
-			stdout, stderr = blast_handle()
+				blast_handle = NcbiblastxCommandline(cmd='blastn', query=global_centroids, db=blast_db, evalue=1e-20, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
+				stdout, stderr = blast_handle()
 
-			print '\n'+time.strftime("%c")+'\n'
+				print '\n'+time.strftime("%c")+'\n'
+			else:
+				blast_out = args.blast_xml
+
 			print "\n### INTERPRETING BLAST RESULTS ###\n"
 			blast_result_handle = open(blast_out) #read in blast result (in xml format)
 
