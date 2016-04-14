@@ -67,12 +67,17 @@ gi_to_taxid_dict = {}
 taxid_list = []
 tax_dict = {}
 BIOM_tables = {}
+global_cluster_counts = {}
+global_cluster_reads = defaultdict(list)
+global_cluster_count = 0
+read_counts_out = ""
 
 parser = argparse.ArgumentParser(description=DESCRIPTION, prog='metaBEAT.py')
 #usage = "%prog [options] REFlist"
 #parser = argparse.ArgumentParser(usage='%(prog)s [options] REFlist', formatter_class=RawTextHelpFormatter)
 
 parser.add_argument("-Q", "--querylist", help="file containing a list of query files", metavar="<FILE>", action="store")
+parser.add_argument("-B", "--BIOM_input", help="OTU table in BIOM format", metavar="<FILE>", action="store")
 parser.add_argument("-v", "--verbose", help="turn verbose output on", action="store_true")
 parser.add_argument("-s", "--seqinfo", help="write out seq_info.csv file", action="store_true")
 parser.add_argument("-f", "--fasta", help="write out ref.fasta file", action="store_true")
@@ -83,6 +88,7 @@ parser.add_argument("-m", "--marker", help="marker ID (default: marker)", metava
 parser.add_argument("-n", "--n_threads", help="Number of threads (default: 1)", type=int, metavar="<INT>", action="store", default="1")
 parser.add_argument("-E", "--extract_centroid_reads", help="extract centroid reads to files", action="store_true")
 parser.add_argument("-e", "--extract_all_reads", help="extract reads to files", action="store_true")
+parser.add_argument("--read_stats_off", help="ommit writing read stats to file", action="store_true")
 query_group = parser.add_argument_group('Query preprocessing', 'The parameters in this group affect how the query sequences are processed')
 query_group.add_argument("--PCR_primer", help='PCR primers (provided in fasta file) to be clipped from reads', metavar="<FILE>", action="store")
 query_group.add_argument("--trim_adapter", help="trim adapters provided in file", metavar="<FILE>", action="store")
@@ -135,13 +141,19 @@ if len(sys.argv) < 2:	#if the script is called without any arguments display the
 
 ###FUNCTIONS
 
-#def parse_BIOM_denovo():
+def parse_BIOM_denovo(table):
 
-	#parse biom
+    import json
+	#Future additions?
 	#check if there is a 'uc' file - if yes add queries[queryID]['format'] = 'uc' -> this will then check if the '*_queries.fasta' file is there.
 	#if not check if there is *_queries.fasta file for the sample, if yes add queries[queryID]['format'] = 'fasta' and queries[queryID]['files'] = *_queries.fasta
-	
-
+    
+    with open(table) as data_file:    
+        data = json.load(data_file)
+    t = Table.from_json(data)
+    
+    return t
+    
 def add_taxonomy_to_biom(per_tax_level_clusters, per_tax_level_trees, biom_in):
 
 	dictionary = {}
@@ -583,10 +595,16 @@ def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sample
 def parse_vsearch_uc(fil, cluster_counts, cluster_reads, extract_reads=0):
     "The function parses the 'uc' file from vsearch"
     f=open(fil,"r")
+
+    read_count=0
+
     for line in [l.strip() for l in f]: #loop through the file one line at a time, stripping off any newline characters
         if line.startswith("C"): #process only lines that start with a "C"
             elem = line.split("\t") #split the lines at tab
             cluster_counts[elem[8]] = int(elem[2]) #write the counts to dictionary with key being the id of the centroid read
+
+	if line.startswith('H'):
+		read_count+=1
         
         if extract_reads:
             if line.startswith('S'):
@@ -602,6 +620,8 @@ def parse_vsearch_uc(fil, cluster_counts, cluster_reads, extract_reads=0):
                     cluster_reads[elem[9]] = [elem[9]] #create a new key for the centroid id and add the centroid id as the first element into the list
                     cluster_reads[elem[9]].append(elem[8]) #add the new read id to the centroid cluster
     f.close()
+	
+    return read_count
 
 
 def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
@@ -954,7 +974,7 @@ else:
 	args.read_crop = ""
 
 
-if args.blast or args.phyloplace:
+if args.blast or args.blast_xml or args.phyloplace:
 	taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
 
 if args.phyloplace:
@@ -1169,6 +1189,10 @@ if args.querylist:
 #				print metadata[sID]
 		fh.close()
 
+if args.BIOM_input:
+	print "\nparsing BIOM table\n"
+	BIOM_tables['OTU_denovo'] = parse_BIOM_denovo(table=args.BIOM_input)
+
 #print len(queries)
 #print len(files_to_barcodes[files_to_barcodes.keys()[0]])
 #print files_to_barcodes
@@ -1341,7 +1365,11 @@ if args.seqinfo:
 if args.fasta:	#this bit writes out the sequences that will become the reference dataset
 	write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
 
-if args.blast:
+if args.blast or args.blast_xml:
+	
+	if args.blast_xml:
+		args.blast_xml = os.path.abspath(args.blast_xml) 
+
 	if not os.path.exists('GLOBAL'):
 		os.makedirs('GLOBAL')
 	os.chdir('GLOBAL')
@@ -1374,12 +1402,6 @@ if args.blast:
 		blast_db = args.blast_db
 
 	os.chdir('../')
-
-#start read stats output
-read_counts_out = open(args.output_prefix+"_read_stats.csv","w")
-outstring = "sample,"+",".join(read_metrics)
-read_counts_out.write(outstring+"\n")
-read_counts_out.close()
 
 
 print '\n'+time.strftime("%c")+'\n'
@@ -1711,7 +1733,7 @@ for queryID in sorted(queries):
 			print "\nparse vsearch uc file\n"
 			cluster_counts = {}
 			cluster_reads = defaultdict(list)
-			parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
+			total_queries = parse_vsearch_uc(fil=queryID+".uc", cluster_counts=cluster_counts, extract_reads=args.extract_all_reads, cluster_reads=cluster_reads)
 
 			
 #			print cluster_reads.keys()
@@ -1772,27 +1794,35 @@ for queryID in sorted(queries):
 	queries[queryID]['cluster_reads'] = dict(cluster_reads)
 #	print "\n%s\n" %queries[queryID]
 	
-
-	print "WRITING BASIC READ STATS TO FILE\n"
-	read_counts_out = open("../"+args.output_prefix+"_read_stats.csv","a")
-	outstring = queryID
-	for m in read_metrics:
-		if read_stats[queryID].has_key(m):
-			outstring += ','+str(read_stats[queryID][m])
-		else:
-			outstring += ',NA'
-	read_counts_out.write(outstring+"\n")
-	read_counts_out.close()
-
 	os.chdir('../') #leave directory for query
+
+	if not args.read_stats_off:
+		print "WRITING BASIC READ STATS TO FILE\n"
+
+		#start read stats output
+		if not read_counts_out: #create the file (overwrite existing) and add header line
+			read_counts_out = open("./"+args.output_prefix+"_read_stats.csv","w")
+			outstring = "sample,"+",".join(read_metrics)
+			read_counts_out.write(outstring+"\n")
+			read_counts_out.close()
+		else:
+			read_counts_out = open("./"+args.output_prefix+"_read_stats.csv","a")
+			outstring = queryID
+			for m in read_metrics:
+				if read_stats[queryID].has_key(m):
+					outstring += ','+str(read_stats[queryID][m])
+				else:
+					outstring += ',NA'
+			read_counts_out.write(outstring+"\n")
+			read_counts_out.close()
+	
 
 
 ############
 
-#parse_BIOM_denovo #should go to the start before anything else starts and throw and error in case somethings wrong
 
 
-if not 'BIOM_denovo' in BIOM_tables:
+if not 'OTU_denovo' in BIOM_tables:
 
 	cluster_check = 0
 	for q in queries.keys():
@@ -1845,16 +1875,18 @@ else:
 	if not os.path.exists('GLOBAL'):
 		os.makedirs('GLOBAL')
 	os.chdir('GLOBAL')
+#	if not global_cluster_count:
+#		global_cluster_count = 1 #To go for the blast route 'global_cluster_count' needs to be > 0 (see below). This is just to make sure this is set in case reading in a BIOM table
 
 
-if args.blast or args.phyloplace:
-	if args.blast:
+if args.blast or args.blast_xml or args.phyloplace:
+	if args.blast or args.blast_xml:
                 methods.append('blast')
         if args.phyloplace:
                 methods.append('pplacer')
 
 	for approach in methods:
-		if approach == 'blast' and global_cluster_count > 0:
+		if approach == 'blast' and ( global_cluster_count > 0 or args.blast_xml ):
 		
 			if not os.path.exists('BLAST_'+str(args.min_ident)):
 				os.makedirs('BLAST_'+str(args.min_ident))
@@ -1873,6 +1905,7 @@ if args.blast or args.phyloplace:
 
 				print '\n'+time.strftime("%c")+'\n'
 			else:
+				print "\nusing existing BLAST result from '%s'\n" %args.blast_xml
 				blast_out = args.blast_xml
 
 			print "\n### INTERPRETING BLAST RESULTS ###\n"
@@ -2018,7 +2051,7 @@ os.utime('GLOBAL', None)
 #This is under construction	
 
 
-if args.blast: #or args.phyloplace:
+if args.blast or args.blast_xml: #or args.phyloplace:
 
 	print "\n##### DONE PROCESSING ALL SAMPLES #####"		
 	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
