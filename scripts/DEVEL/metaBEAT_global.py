@@ -1805,16 +1805,16 @@ for queryID in sorted(queries):
 			outstring = "sample,"+",".join(read_metrics)
 			read_counts_out.write(outstring+"\n")
 			read_counts_out.close()
-		else:
-			read_counts_out = open("./"+args.output_prefix+"_read_stats.csv","a")
-			outstring = queryID
-			for m in read_metrics:
-				if read_stats[queryID].has_key(m):
-					outstring += ','+str(read_stats[queryID][m])
-				else:
-					outstring += ',NA'
-			read_counts_out.write(outstring+"\n")
-			read_counts_out.close()
+			
+		read_counts_out = open("./"+args.output_prefix+"_read_stats.csv","a")
+		outstring = queryID
+		for m in read_metrics:
+			if read_stats[queryID].has_key(m):
+				outstring += ','+str(read_stats[queryID][m])
+			else:
+				outstring += ',NA'
+		read_counts_out.write(outstring+"\n")
+		read_counts_out.close()
 	
 
 
