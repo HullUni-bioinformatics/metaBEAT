@@ -620,6 +620,8 @@ def parse_vsearch_uc(fil, cluster_counts, cluster_reads, extract_reads=0):
                     cluster_reads[elem[9]] = [elem[9]] #create a new key for the centroid id and add the centroid id as the first element into the list
                     cluster_reads[elem[9]].append(elem[8]) #add the new read id to the centroid cluster
     f.close()
+
+    read_count += len(cluster_counts)
 	
     return read_count
 
