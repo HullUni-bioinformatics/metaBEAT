@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.93-global"
+VERSION="0.94-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -84,7 +84,7 @@ parser.add_argument("-v", "--verbose", help="turn verbose output on", action="st
 parser.add_argument("-s", "--seqinfo", help="write out seq_info.csv file", action="store_true")
 parser.add_argument("-f", "--fasta", help="write out ref.fasta file", action="store_true")
 parser.add_argument("-p", "--phyloplace", help="perform phylogenetic placement", action="store_true")
-#parser.add_argument("-t", "--taxids", help="write out taxid.txt file", action="store_true")
+parser.add_argument("-t", "--taxids", help="write out taxid.txt file", action="store_true")
 parser.add_argument("-b", "--blast", help="compile local blast db and blast queries", action="store_true")
 parser.add_argument("-m", "--marker", help="marker ID (default: marker)", metavar="<string>", action="store", default="marker")
 parser.add_argument("-n", "--n_threads", help="Number of threads (default: 1)", type=int, metavar="<INT>", action="store", default="1")
@@ -145,6 +145,7 @@ if len(sys.argv) < 2:	#if the script is called without any arguments display the
 
 def parse_BIOM_denovo(table):
 
+    from biom.table import Table
     import json
 	#Future additions?
 	#check if there is a 'uc' file - if yes add queries[queryID]['format'] = 'uc' -> this will then check if the '*_queries.fasta' file is there.
@@ -725,17 +726,19 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
         
     return tax_count
 
-
+def write_taxids(tids, out='taxids.txt'):
+    print "write out taxids to taxids.txt\n"
+    f = open(out,"w")
+    for tid in tids:
+        f.write(tid + "\n")
+    f.close()
+	
 
 def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
     "The function takes a list of taxonomic ids, runs the taxtable program from the taxit suite"
     "to summarize the taxonomic information for the taxids and formats the result into a dictionary"
 
-    print "write out taxids to taxids.txt\n"
-    f = open("taxids.txt","w")
-    for tid in tids:
-        f.write(tid + "\n")
-    f.close()
+    write_taxids(tids)
 
     cmd = "taxit taxtable -d %s -t taxids.txt -o taxa.csv" %taxonomy_db
     print "running taxit to generate reduced taxonomy table"
@@ -1345,7 +1348,7 @@ if args.REFlist:
 			
 			if len(taxid) > 0:
 #				taxids[taxid] += 1
-				current = '"%s","%s","%s","%s",0' % (seqs[i].name, seqs[i].name, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
+				current = '"%s","%s","%s","%s",0' % (seqs[i].id, seqs[i].id, taxid, seqs[i].features[0].qualifiers['organism'][0]) #producing a string for the current record for the seq_info file that is needed for the reference package required by pplacer
 				seq_info.extend([current])	#add the string to the seq_info array
 	
 		if skipped_ref_seqs:
@@ -1374,6 +1377,9 @@ if args.seqinfo:
 #		print elem
 		f.write(elem + "\n")
 	f.close()
+
+if args.taxids:
+	write_taxids(reference_taxa.values())
 
 if args.fasta:	#this bit writes out the sequences that will become the reference dataset
 	write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
@@ -1906,9 +1912,10 @@ else: #I would get there if I gave the denovo BIOM table via the command line
 	
 	if not os.path.exists('GLOBAL'):
 		os.makedirs('GLOBAL')
-		shutil.copy(args.BIOM_in, '.')
-		shutil.copy(global_centroids, '.')
 	os.chdir('GLOBAL')
+	print "creating local copies of relevant files if necessary"
+	shutil.copy(args.BIOM_input, './')
+	shutil.copy(global_centroids, './')
 
 	
 
