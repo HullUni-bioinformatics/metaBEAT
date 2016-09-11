@@ -6,6 +6,7 @@ MAINTAINER Christoph Hahn <chrisi.hahni@gmail.com>
 # Make sure apt is up to date
 RUN apt-get update -y --fix-missing
 RUN apt-get install -y openjdk-7-jre-headless
+RUN apt-get install -y wget
 #RUN apt-get upgrade -y
 
 #RUN mkdir /home/metabarcoding
@@ -29,16 +30,26 @@ ADD external_software/process_shortreads /usr/bin/
 ADD external_software/fastq_quality_trimmer /usr/bin/
 ADD external_software/fastq_quality_filter /usr/bin/
 
-
 RUN mkdir /src
-ENV PATH /src:$PATH
-RUN mkdir /home/working
+WORKDIR /src
+
+#kraken
+RUN wget -qO- wget https://github.com/DerrickWood/kraken/archive/v0.10.5-beta.tar.gz | tar xvz -C . && \
+cd kraken-0.10.5-beta/ && \
+./install_kraken.sh . && \
+cd ..
+ENV PATH /src/kraken-0.10.5-beta/:$PATH
+
+#jellyfish
+RUN wget -qO- !wget http://www.cbcb.umd.edu/software/jellyfish/jellyfish-1.1.11.tar.gz | tar xvz -C . && \
+cd jellyfish-1.1.11/ && \
+./configure --prefix=$(pwd) && make && make install 
+ENV PATH /src/jellyfish-1.1.11/bin:$PATH
 
 #create taxonomy database
-RUN taxit new_database -d /src/taxonomy.db
-
-RUN rm /src/taxdmp.zip
-RUN mv /src/taxonomy.db /usr/bin/
+RUN taxit new_database -d /src/taxonomy.db && \
+rm /src/taxdmp.zip && \
+mv /src/taxonomy.db /usr/bin/
 
 #add scripts
 ADD scripts/fetch_from_db.py /usr/bin/
@@ -46,9 +57,11 @@ ADD scripts/metaBEAT.py /usr/bin/
 ADD scripts/metaBEAT_global.py /usr/bin/
 ADD scripts/jplace_to_biom.py /usr/bin/
 
+RUN mkdir /home/working
+
 #create mount point at /working
-RUN mkdir /home/working/IN
-RUN mkdir /home/working/OUT
+#RUN mkdir /home/working/IN
+#RUN mkdir /home/working/OUT
 VOLUME /home/working
 #make /working the working directory in the image
 WORKDIR /home/working	
