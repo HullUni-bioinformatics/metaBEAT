@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.95-global"
+VERSION="0.96-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -124,6 +124,7 @@ blast_group.add_argument("--min_ali_length", help="minimum alignment length in p
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
 phyloplace_group = parser.add_argument_group('Phylogenetic placement', 'The parameters in this group affect phylogenetic placement')
 phyloplace_group.add_argument("--refpkg", help="PATH to refpkg for pplacer", metavar="<DIR>", action="store")
+phyloplace_group.add_argument("--jplace", help="phylogenetic placement result from prefious pplacer run in *.jplace format", metavar="<FILE>", action="store")
 kraken_group = parser.add_argument_group('Kraken', 'The parameters in this group affect taxonomic assignment using Kraken')
 kraken_group.add_argument("--kraken_db", help="PATH to a Kraken database", metavar="<DIR>", action="store")
 kraken_group.add_argument("--rm_kraken_db", help="Remove Kraken database after successful completion", action="store_true")
@@ -858,6 +859,32 @@ def gi_to_taxid(b_filtered, all_taxids, processed, v=0):
     all_taxids = list(set(all_taxids))
     return all_taxids
 
+def pre_pplacer_filter(blast_handle, m_ident=0.8, m_ali_length=0.95, v=0):
+	"""
+	Parse blast xml and bin queries with <80% similarity. 
+	"""
+	
+	result = {'format':'taxid', 'nohit':[], 'to_pplacer':[], 'strand_reversed':[]}
+	count = 0
+	for res in blast_handle:
+		count+=1
+		if not res.alignments:
+			result['nohit'].append(res.query)
+		elif (len(res.alignments[0].hsps[0].query) < int(res.query_length*m_ali_length)): #check minimum alignment length
+			result['nohit'].append(res.query)
+		elif (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) < m_ident): #check if hit is under the identity threshold
+			result['nohit'].append(res.query)
+		else: #this is a hit worth sending to pplacer
+			result['to_pplacer'].append(res.query)
+			if res.alignments[0].hsps[0].sbjct_start > res.alignments[0].hsps[0].sbjct_end:
+                		result['strand_reversed'].append(res.query)
+
+	print " number of queries processed: %i" %count
+	print "\nNumber of queries passed to pplacer:\t%i\n(%i will be reverse complemented first)" %(len(result['to_pplacer']), len(result['strand_reversed']))
+	print "Number of queries directly binned to 'unassigned':\t%i" %len(result['nohit'])
+
+	return result		
+		
 def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, strand_reversed=None):
     "The function interprets a BLAST results handle and filters results subsequent taxonomic assignment using LCA"
     result = {'format':''}
@@ -971,7 +998,7 @@ def write_out_refs_to_fasta(ref_seqs, ref_taxids = {}):
 	OUT.close()
 #	OUT_temp.close()
 
-def annotation_BIOM_table_with_taxonmy(BIOM_table, hits_per_tax_level, taxonomy_dictionary, version=VERSION, prefix=args.output_prefix):
+def annotation_BIOM_table_with_taxonmy(BIOM_table, hits_per_tax_level, taxonomy_dictionary, method, version=VERSION, prefix=args.output_prefix):
 	"""
 	Annoates a denovo BIOM table with a taxonomy and writes the new tables out
 	"""
@@ -988,27 +1015,27 @@ def annotation_BIOM_table_with_taxonmy(BIOM_table, hits_per_tax_level, taxonomy_
 	BIOM_tables_loc['cluster_taxonomy'] = pa_and_collapse_by_taxonomy(in_table=BIOM_tables_loc['OTU_taxonomy'])
 
 #	print tables
-	out=open(prefix+"-OTU-taxonomy.biom","w")
+	out=open(prefix+"-OTU-taxonomy."+method+".biom","w")
 	BIOM_tables_loc['OTU_taxonomy'].to_json('metaBEAT v.'+version, direct_io=out)
 	out.close()
 
-	out=open(prefix+"-OTU-taxonomy.tsv","w")
+	out=open(prefix+"-OTU-taxonomy."+method+".tsv","w")
 	out.write(BIOM_tables_loc['OTU_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
 	out.close()
 
-	out=open(prefix+"-by-taxonomy-readcounts.biom","w")
+	out=open(prefix+"-by-taxonomy-readcounts."+method+".biom","w")
 	BIOM_tables_loc['taxon_taxonomy'].to_json('metaBEAT v.'+version, direct_io=out)
 	out.close()
 
-	out=open(prefix+"-by-taxonomy-readcounts.tsv","w")
+	out=open(prefix+"-by-taxonomy-readcounts."+method+".tsv","w")
 	out.write(BIOM_tables_loc['taxon_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
 	out.close()
 
-	out=open(prefix+"-by-taxonomy-clustercounts.biom","w")
+	out=open(prefix+"-by-taxonomy-clustercounts."+method+".biom","w")
 	BIOM_tables_loc['cluster_taxonomy'].to_json('metaBEAT v.'+version, direct_io=out)
 	out.close()
 
-	out=open(prefix+"-by-taxonomy-clustercounts.tsv","w")
+	out=open(prefix+"-by-taxonomy-clustercounts."+method+".tsv","w")
 	out.write(BIOM_tables_loc['cluster_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
 	out.close()
 
@@ -1049,8 +1076,8 @@ def initiate_custom_kraken_db(db_path='./', db_name='custom', v=0):
     print cmd
     cmdlist = shlex.split(cmd)
     stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-    if v and stdout:
-        print stdout
+#    if v and stdout:
+#        print stdout
     if stderr:
         print stderr
 
@@ -1085,12 +1112,12 @@ def build_custom_kraken_db(db_path='./', db_name='custom', v=0):
     print cmd
     cmdlist = shlex.split(cmd)
     stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-    if v and stdout:
-        print stdout
+#    if v and stdout:
+#        print stdout
     if stderr:
         print stderr
     
-def full_build_custom_kraken_db(db_in_fasta, db_path='.', db_name='KRAKEN_DB', v=0):
+def full_build_custom_kraken_db(db_in_fasta, db_path='.', db_name='KRAKEN_DB', v=args.verbose):
     
     print "\n### BUILD CUSTOM KRAKEN DATABASE ###\n"
     
@@ -1170,11 +1197,12 @@ def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
                 tax_count[tax_dict[kraken_out['hit'][query][0]][1]][kraken_out['hit'][query][0]].append(query)
 
             else:
-                print "invalid assignment level\n\t%s - %s - %s" %(kraken_out['hit'][query][0],tax_dict[kraken_out['hit'][query][0]][1], tax_dict[kraken_out['hit'][query][0]][2])
+		if v:
+	                print "invalid assignment level\n\t%s - %s - %s" %(kraken_out['hit'][query][0],tax_dict[kraken_out['hit'][query][0]][1], tax_dict[kraken_out['hit'][query][0]][2])
                 ok = 0
                 #find the index to count down from
                 index = tax_dict["tax_id"].index(tax_dict[kraken_out['hit'][query][0]][1])
-                print index,tax_dict["tax_id"][index]
+#                print index,tax_dict["tax_id"][index]
                 while index >= minimum and not ok:
                     index-=1
 
@@ -1190,13 +1218,163 @@ def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
                 tax_count[tax_dict["tax_id"][index]][taxid].append(query)
                 
 
-                
     for key in tax_count.keys():
         if not tax_count[key]:
             del(tax_count[key])
     
     return tax_count
 
+def extract_queries_plus_rc(infile, good_list, bad_list, rc_list, out_prefix='pplacer'):
+	"""
+	Bins reads into two files according to lists containing the seqeuence ids.
+	"""
+	from Bio import SeqIO
+
+	good_seqs = []
+	bad_seqs = []
+	handle = open(infile,'r')
+
+	for r in SeqIO.parse(handle,'fasta'):
+		if r.id in good_list:
+			good_seqs.append(r)
+		elif r.id in bad_list:
+			bad_seqs.append(r)
+
+	if rc_list:
+		for r in good_seqs:
+			if r.id in rc_list:
+				r.seq = r.seq.reverse_complement()
+
+	good_out = open(out_prefix+'.queries.fasta','w')
+	bad_out = open(out_prefix+'.excluded.fasta','w')
+	SeqIO.write(good_seqs, good_out, 'fasta')
+	SeqIO.write(bad_seqs, bad_out, 'fasta')
+	good_out.close()
+	bad_out.close()
+
+def parse_refpkg_json(refpkg):
+	"""
+	parse pplacer refpkg and return full path to alignment and hmm profile
+	"""
+	import json
+
+	print "\nparsing pplacer refpkg: %s\n" %refpkg
+	fh = open(refpkg+"/CONTENTS.json","r")
+	refpkg_content = json.load(fh)
+	profile = refpkg+'/'+refpkg_content['files']['profile']
+	print "found hmm profile: %s" %profile
+	aln_fasta = refpkg+'/'+refpkg_content['files']['aln_fasta']
+	print "found alignment: %s" %aln_fasta
+
+	return profile,aln_fasta
+
+def run_hmmalign(queries, aln_fasta, profile, out='queries_to_profile.sto'):
+	"""
+	Run basic hmmalign to align sequences to alignment and output in *.sto format
+	"""
+	import shlex, subprocess
+	
+	cmd = "hmmalign -o %s --mapali %s %s %s" %(out, aln_fasta, profile, queries)
+	print cmd
+	cmdlist = shlex.split(cmd)
+	stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+	print stdout	#this currently doesnt print anything, i.e. there is not stdout
+	if stderr:
+		print stderr
+		sys.exit('some error from hmmalign')
+
+def run_pplacer(refpkg, queries_to_profile, prefix='pplacer', v=0):
+	"""
+	Run pplacer
+	"""
+
+	cmd = "pplacer -c %s %s -p --keep-at-most 3 -o %s.jplace" %(refpkg, queries_to_profile, prefix)
+	print cmd+'\n'
+	cmdlist = shlex.split(cmd)
+	stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+	if v:
+		print stdout
+	if stderr:
+		print stderr
+		sys.exit('some error from placer')
+
+def parse_pplacer(jplace_file, result_dict): 
+        """ 
+        parse pplacer result (*.jplace) and write results to dictionary 
+        """
+        import json
+
+        result_dict['hit'] = {}
+        
+        fh = open(jplace_file,"r")
+        jplace = json.load(fh)
+        for pp_placement in jplace['placements']:
+#                print "PLACEMENT\n%s" %pp_placement
+#                print pp_placement['p'][0][0]
+#               print pp_queries['p'][0] #just consider the first placement
+                placement = pp_placement['p'][0][0] #take the first placement for now
+                for query in pp_placement['nm']:
+                        query = str(query[0].replace('\\',''))
+#                        print "%s\t%s" %(query,placement)
+                        result_dict['hit'][query] = [placement]
+
+        return result_dict
+    
+
+def assign_taxonomy_pplacer(pplacer_out, tax_dict, v=0):
+    """
+    finds taxonomic level of assignemt based on taxid and bins into dictionary
+    """
+    from collections import defaultdict
+  
+      
+    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
+    tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
+    minimum = tax_dict["tax_id"].index("kingdom")
+    
+    if pplacer_out.has_key('nohit'):
+        if not tax_count.has_key('nohit'):
+            tax_count['nohit'] = {'nohit':[]}
+        tax_count['nohit']['nohit'].extend(pplacer_out['nohit'])
+
+    if pplacer_out.has_key('hit'):
+        
+        for query in pplacer_out['hit']:
+
+            if tax_dict[pplacer_out['hit'][query][0]][1] in levels:
+                if v:
+                    print "\ndirect assignment for %s -> %s" %(query, pplacer_out['hit'][query][0])
+                if not tax_count[tax_dict[pplacer_out['hit'][query][0]][1]].has_key(pplacer_out['hit'][query][0]):
+                    tax_count[tax_dict[pplacer_out['hit'][query][0]][1]][pplacer_out['hit'][query][0]] = []
+                tax_count[tax_dict[pplacer_out['hit'][query][0]][1]][pplacer_out['hit'][query][0]].append(query)
+
+            else:
+		if v:
+                	print "invalid assignment level\n\t%s - %s - %s" %(pplacer_out['hit'][query][0],tax_dict[pplacer_out['hit'][query][0]][1], tax_dict[pplacer_out['hit'][query][0]][2])
+                ok = 0
+                #find the index to count down from
+                index = tax_dict["tax_id"].index(tax_dict[pplacer_out['hit'][query][0]][1])
+#                print index,tax_dict["tax_id"][index]
+                while index >= minimum and not ok:
+                    index-=1
+
+                    if tax_dict["tax_id"][index] in levels:
+                        ok = 1
+
+                taxid = tax_dict[pplacer_out['hit'][query][0]][index]
+
+                if v:
+                    print "adjusted assignment for %s -> %s" %(query, taxid)
+                if not tax_count[tax_dict["tax_id"][index]].has_key(taxid):
+                    tax_count[tax_dict["tax_id"][index]][taxid] = []
+                tax_count[tax_dict["tax_id"][index]][taxid].append(query)
+                
+
+    for key in tax_count.keys():
+        if not tax_count[key]:
+            del(tax_count[key])
+    
+    return tax_count
 
 
 ###########
@@ -1221,22 +1399,25 @@ else:
 if args.kraken_db:
 	args.kraken_db = os.path.abspath(args.kraken_db)
 
-if args.blast or args.blast_xml or args.pplace:
-	taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
+#if args.blast or args.blast_xml or args.pplace:
+taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
 
 if args.pplace:
-	if not args.refpkg:
+	if not (args.refpkg or args.jplace):
 		print "\nTo perform phylogenetic placement with pplacer metaBEAT currently expects a reference package to be specified via the --refpkg flag\n"
-		parser.print_help()
 		sys.exit()
-	
-	if not os.path.isdir(args.refpkg):
-		print "\nThe specified reference package does not seem to be valid\n"
-		sys.exit()
-	if not args.blast:
+	if args.refpkg:
+		if not os.path.isdir(args.refpkg):
+			print "\nThe specified reference package does not seem to be valid\n"
+			sys.exit()
+		else:
+			args.refpkg = os.path.abspath(args.refpkg) 
+	if args.jplace:
+		args.jplace = os.path.abspath(args.jplace)
+
+	if not (args.blast or args.blast_xml):
 		print "\nPhylogenetic placement currently requires a blast search first to determine the set of queries for which phylogenetic placement is attempted - add the --blast flag to your command\n"
 		sys.exit()	
-	args.refpkg = os.path.abspath(args.refpkg) 
 
 if args.product_length:
 	args.product_length = '-M %s' %args.product_length
@@ -2146,7 +2327,7 @@ else: #I would get there if I gave the denovo BIOM table via the command line
 
 
 if args.blast or args.blast_xml or args.pplace or args.kraken:
-	if args.blast or args.blast_xml:
+	if args.blast: # or args.blast_xml:
                 methods.append('blast')
         if args.pplace:
                 methods.append('pplacer')
@@ -2154,7 +2335,7 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 		methods.append('kraken')
 
 	for approach in methods:
-		if approach == 'blast' and ( global_cluster_count > 0 or args.blast_xml ):
+		if approach == 'blast' and ( global_cluster_count > 0): # or args.blast_xml ):
 		
 			if not os.path.exists('BLAST_'+str(args.min_ident)):
 				os.makedirs('BLAST_'+str(args.min_ident))
@@ -2171,6 +2352,7 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 				blast_handle = NcbiblastxCommandline(cmd='blastn', query=global_centroids, db=blast_db, evalue=1e-20, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
 				stdout, stderr = blast_handle()
 
+				args.blast_xml = os.path.abspath('global_blastn.out.xml')
 				print '\n'+time.strftime("%c")+'\n'
 			else:
 				print "\nusing existing BLAST result from '%s'\n" %args.blast_xml
@@ -2211,8 +2393,10 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 			if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
                 		tax_dict['tax_id'] = ['nohit']
 			
-			BIOM_tables_per_method[approach] = annotation_BIOM_table_with_taxonmy(BIOM_table=BIOM_tables_per_method['OTU_denovo'], hits_per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict, prefix=args.output_prefix)	
+			BIOM_tables_per_method[approach] = annotation_BIOM_table_with_taxonmy(BIOM_table=BIOM_tables_per_method['OTU_denovo'], hits_per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict, prefix=args.output_prefix, method=approach)	
 
+			print "\n##### BLAST ANALYSIS DONE #####\n"
+			print "Find result tables in '%s'\n\n" %os.path.abspath('.')
 			print BIOM_tables_per_method
 			os.chdir('../')
                 	print '\n'+time.strftime("%c")+'\n'
@@ -2220,7 +2404,62 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 
 		elif approach == 'pplacer' and global_cluster_count > 0:
 			taxonomy_count = defaultdict(dict)
+			pplacer_out_dict = {}
                         print "\n##### PHYLOGENETIC PLACEMENT WITH PPLACER #####\n"
+			if not os.path.exists('PPLACER'):
+				os.makedirs('PPLACER')
+			os.chdir('PPLACER')
+
+			print "\nestablishing taxonomy for reference sequences from custom database\n"
+                        taxid_list = reference_taxa.values()
+                        make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+
+			if not args.jplace:
+				print "\n### PREPARING PPLACER INPUT ###\n" 
+			
+				print "pplacer analysis will be limited to queries with at least %s %% similarity to the reference database\n" %(args.min_ident*100)
+				print "This will be determined based on a blast analysis .."
+				if args.blast_xml:
+					print "Filtering queries for pplacer based on results from previous BLAST result : %s" %args.blast_xml
+				else:
+					print "Please provide a blast result in xml format '--blast_xml' or simply do a full blast analysis (because you can) via '--blast'"
+					sys.exit()
+
+				blast_result_handle = open(args.blast_xml) #read in blast result (in xml format)
+
+				print "parse blast xml file"
+				blast_results = NCBIXML.parse(blast_result_handle) #parse blast xml file
+	
+				print "pre-bin based on blast output .. ",
+				pplacer_out_dict = pre_pplacer_filter(blast_handle=blast_results, m_ident=0.8, m_ali_length=args.min_ali_length, v=args.verbose)
+				
+				extract_queries_plus_rc(infile=global_centroids, good_list=pplacer_out_dict['to_pplacer'], bad_list=pplacer_out_dict['nohit'], rc_list=pplacer_out_dict['strand_reversed'], out_prefix='pplacer')
+				profile,aln_fasta = parse_refpkg_json(args.refpkg)
+				print "\n### ALIGN QUERIES TO HMM PROFILE ###\n"
+				run_hmmalign(os.path.abspath('pplacer.queries.fasta'), aln_fasta, profile, out='queries_to_profile.sto')
+	
+				print "\n### RUNNING PPLACER ###\n"
+				run_pplacer(args.refpkg, queries_to_profile='queries_to_profile.sto', prefix='pplacer', v=args.verbose)
+				args.jplace = os.path.abspath('pplacer.jplace')
+
+			else:
+				print "using existing pplacer result: %s" %args.jplace
+	
+			print "\n### INTERPRETING PPLACER RESULTS ###\n"
+			pplacer_out_dict = parse_pplacer(jplace_file=args.jplace, result_dict=pplacer_out_dict)
+			taxonomy_count = assign_taxonomy_pplacer(pplacer_out=pplacer_out_dict, tax_dict=tax_dict, v=args.verbose)
+
+			if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
+                		tax_dict['tax_id'] = ['nohit']
+			
+			BIOM_tables_per_method[approach] = annotation_BIOM_table_with_taxonmy(BIOM_table=BIOM_tables_per_method['OTU_denovo'], hits_per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict, prefix=args.output_prefix, method=approach)	
+
+			print BIOM_tables_per_method
+
+			print "\n##### PPLACER ANALYSIS DONE #####\n"
+			print "Find result tables in '%s'\n\n" %os.path.abspath('.')
+			os.chdir('../')
+                	print '\n'+time.strftime("%c")+'\n'
 
 		elif approach == 'kraken' and global_cluster_count > 0:
 			taxonomy_count = defaultdict(dict)
@@ -2252,7 +2491,7 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 			if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
                 		tax_dict['tax_id'] = ['nohit']
 			
-			BIOM_tables_per_method[approach] = annotation_BIOM_table_with_taxonmy(BIOM_table=BIOM_tables_per_method['OTU_denovo'], hits_per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict, prefix=args.output_prefix)	
+			BIOM_tables_per_method[approach] = annotation_BIOM_table_with_taxonmy(BIOM_table=BIOM_tables_per_method['OTU_denovo'], hits_per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict, prefix=args.output_prefix, method=approach)	
 
 			print BIOM_tables_per_method
 
@@ -2260,542 +2499,24 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 				print "\nRemoving Kraken database\n"
 				shutil.rmtree(args.kraken_db)
 
-			print "\n##### KRAKEN DONE #####\n"
-			print "Find result tables in '%s'" %os.path.abspath('.')
+			print "\n##### KRAKEN ANALYSIS DONE #####\n"
+			print "Find result tables in '%s'\n\n" %os.path.abspath('.')
 			os.chdir('../')
                 	print '\n'+time.strftime("%c")+'\n'
 
-
-################### done with assignments - THIS SHOULD BECOME A SEPARATE LOOP OVER the global results for each method
-#		print taxonomy_count
-
-#		if taxonomy_count.has_key('nohit'):
-#			tax_dict["tax_id"].insert(0,'nohit')
-
-#		if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
-#                	tax_dict['tax_id'] = ['nohit']
-
-
-
- #               if tax_dict["tax_id"][0] == 'nohit':
- #               	del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
 
 else:
 	print "\nPlease select a method for taxonomic assignment:\n--blast\n--pplace\n--kraken\n"
 
 os.chdir('../')
 os.utime('GLOBAL', None)
-#This is under construction	
 
-
-#if args.blast or args.blast_xml: #or args.pplace:
-
-#	print "\n##### DONE PROCESSING ALL SAMPLES #####"	
-
-#	test_dict = {}
-#	test_dict['blast'] = annotation_BIOM_table_with_taxonmy(BIOM_table=BIOM_tables['OTU_denovo'], hits_per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict, prefix=args.output_prefix)	
-#	print test_dict
-#	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
-
-#	taxonomic_trees = {}
-#	taxonomic_trees = find_full_taxonomy(per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict)
-#	BIOM_tables['OTU_taxonomy'] = add_taxonomy_to_biom(per_tax_level_clusters=taxonomy_count, per_tax_level_trees=taxonomic_trees, biom_in=BIOM_tables['OTU_denovo'])
-#	BIOM_tables['taxon_taxonomy'] = collapse_biom_by_taxonomy(in_table=BIOM_tables['OTU_taxonomy'])
-#	BIOM_tables['cluster_taxonomy'] = pa_and_collapse_by_taxonomy(in_table=BIOM_tables['OTU_taxonomy'])
-#
-#	print tables
-#	out=open(args.output_prefix+"-OTU-taxonomy.biom","w")
-#	BIOM_tables['OTU_taxonomy'].to_json('metaBEAT v.'+VERSION, direct_io=out)
-#	out.close()
-
-#	out=open(args.output_prefix+"-OTU-taxonomy.tsv","w")
-#	out.write(BIOM_tables['OTU_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
-#	out.close()
-
-#	out=open(args.output_prefix+"-by-taxonomy-readcounts.biom","w")
-#	BIOM_tables['taxon_taxonomy'].to_json('metaBEAT v.'+VERSION, direct_io=out)
-#	out.close()
-
-#	out=open(args.output_prefix+"-by-taxonomy-readcounts.tsv","w")
-#	out.write(BIOM_tables['taxon_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
-#	out.close()
-
-#	out=open(args.output_prefix+"-by-taxonomy-clustercounts.biom","w")
-#	BIOM_tables['cluster_taxonomy'].to_json('metaBEAT v.'+VERSION, direct_io=out)
-#	out.close()
-
-#	out=open(args.output_prefix+"-by-taxonomy-clustercounts.tsv","w")
-#	out.write(BIOM_tables['cluster_taxonomy'].to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
-#	out.close()
 
 print "\n##### DONE! #####\n"
 print '\n'+time.strftime("%c")+'\n'
 
 sys.exit()
 
-
-#This is the old solution
-
-if args.blast or args.phyloplace:
-	print "\n##### DONE PROCESSING ALL SAMPLES #####"		
-	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
-
-	clust_to_biom = []
-	data_to_biom = []
-	observ_ids=[]
-#       print "tax_dict:\n%s" %tax_dict
-	for tax_rank in reversed(tax_dict["tax_id"]):
-		if global_taxa.has_key(tax_rank):
-#                       print "tax_rank: %s" %tax_rank
-#                       print "taxa: %s" %global_taxa[tax_rank]
-			for out in sorted(global_taxa[tax_rank]):
-#				print "%s: %s" %(out, global_taxa[tax_rank][out])
-				observ_ids.append(tax_dict[out][2])
-				data_to_biom.append(global_taxa[tax_rank][out])
-				clust_to_biom.append(global_clust[tax_rank][out])
-
-	#take care of nohits if any exist
-	if global_taxa.has_key('nohit'):
-		observ_ids.append('unassigned')
-		data_to_biom.append(global_taxa['nohit']['nohit'])
-		clust_to_biom.append(global_clust['nohit']['nohit'])
-
-	#print data_to_biom
-	data = np.asarray(data_to_biom)
-	clust_data = np.asarray(clust_to_biom)
-#	print "data:\n%s" %data
-#	print len(data)
-
-	sample_ids = []	
-	for key in sorted(queries.keys()):
-#		print key
-		for met in methods:
-#			print met
-			sample_ids.append(key+"."+met)
-#	print "sample_ids:\n%s" %sample_ids
-	#print len(sample_ids)
-
-	sample_metadata=[]
-	for q in sample_ids:
-		temp={}
-		temp['method'] = q.split(".")[-1]
-#		print queries[q]
-#		sample_metadata.append(queries[q])
-		if args.mock_meta_data:
-			r="%.1f" %random.uniform(20.0,25.0)
-			temp['temperature'] = "%.1f C" %float(r)
-			r="%.1f" %random.uniform(10.0,15.0)
-			temp['depth'] = "%.1f m" %float(r)
-			treatments = ['A','B']
-			temp['treatment'] = random.choice(treatments)
-
-		if args.metadata:
-			current = ".".join(q.split(".")[:-1])
-#			print current
-			if not metadata.has_key(current):
-				print "sample %s has no metadata available\n"
-			else:
-				for meta in metadata[current].keys():
-					temp[meta] = metadata[current][meta]
-		sample_metadata.append(temp)
-		
-#	print "sample_metadata:\n%s" %sample_metadata
-#	print len(sample_metadata)
-	
-#	print "observ_ids:\n%s" %observ_ids
-#	print len(observ_ids)
-
-	observation_metadata=[]
-
-	Taxonomy=defaultdict(dict)
-	syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
-	levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
-	level_indices = []
-        for level in levels:
-        	for i in range(len(tax_dict['tax_id'])):
-                	if level == tax_dict['tax_id'][i]:
-                        	level_indices.append(i)
-
-	global_taxids_hit = list(set(global_taxids_hit))
-	for tid in global_taxids_hit:
-		ind_taxonomy=[]
-		if tax_dict.has_key(tid):
-			for i in range(len(levels)):
-				if tax_dict[tid][level_indices[i]]:
-					ind_taxonomy.append('%s%s' %(syn[levels[i]],tax_dict[tax_dict[tid][level_indices[i]]][2].replace(' ','_')))
-				else:
-					ind_taxonomy.append('%sunknown' %syn[levels[i]])
-		else:
-			"taxid %s has not been seen before\n" %tid
-
-		for j in reversed(range(len(levels))):
-			if '_unknown' in ind_taxonomy[j]:
-				del ind_taxonomy[j]
-
-		Taxonomy[tax_dict[tid][2]]['taxonomy'] = ind_taxonomy
-
-##	print Taxonomy
-
-	if observ_ids[-1] == 'unassigned':
-		ind_taxonomy = []
-		for lev in levels:
-			ind_taxonomy.append('%sunassigned' %syn[lev])
-
-		Taxonomy['unassigned']['taxonomy'] = ind_taxonomy
-
-	for taxon in observ_ids:
-#		print "%s: %s" %(taxon, Taxonomy[taxon])
-		observation_metadata.append(Taxonomy[taxon])
-	
-#	print "observation metadata:\n%s" %observation_metadata
-#	print len(observation_metadata)
-
-### double check all inputs for table
-#	print "data: %s" %data
-#	print "data: %s "%len(data)
-#	print "cluster data: %s" %clust_data
-#	print len(clust_data)
-#       print "observed_ids: %s" %sorted(observ_ids)
-#	print "observations: %s" %len(observ_ids)
-#       print "non redundant: %i" %len(list(set(observ_ids)))
-#	print "sample ids: %s" %sample_ids
-#	print "samples: %s" %len(sample_ids)
-#	print "observation metadata: %s" %observation_metadata
-#	print len(observation_metadata)
-#	print "sample_metadata: %s" %sample_metadata
-#	print len(sample_metadata)
-
-#	print "\n"
-
-	table = Table(data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Read count Table')
-	clust_table = Table(clust_data, observ_ids, sample_ids, observation_metadata, sample_metadata, table_id='Cluster count Table')
-
-
-#	print tables
-	out=open(args.output_prefix+".biom","w")
-	table.to_json('metaBEAT v.'+VERSION, direct_io=out)
-	out.close()
-
-	out=open(args.output_prefix+".tsv","w")
-	out.write(table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
-	out.close()
-
-	out=open(args.output_prefix+"_clusters.biom","w")
-	clust_table.to_json('metaBEAT v.'+VERSION, direct_io=out)
-	out.close()
-
-	out=open(args.output_prefix+"_clusters.tsv","w")
-	out.write(clust_table.to_tsv(header_key='taxonomy', header_value='taxomomy')) #to_json('generaged by test', direct_io=out)
-	out.close()
-print "\n##### DONE! #####\n"
-print '\n'+time.strftime("%c")+'\n'
-
-
-#print "remove read-pair id from extended reads. \n output overall run summary, i.e. per sample: raw reads, trimmed reads, merged reads, clusters, etc. \n make OTU table output standard"
 #
 #add functionality to iterate over parameters, e.g. cluster_coverage 10,20,30,40,50 and treat each as different sample in the biom file
-
-sys.exit()
-
-
-if args.blast or args.phyloplace or args.merge or args.cluster:
-        ##determine which methods will be applied
-        if args.blast:
-                methods.append('blast')
-        if args.phyloplace:
-                methods.append('pplacer')
-
-        for queryID in sorted(queries):
-	
-#		print "BEFORE BLAST"
-#		print cluster_counts
-#		print cluster_reads
-		#running blast search against previously build database
-		blast_out = "%s_%s_blastn.out.xml" % (args.marker, queryID)
-
-		some_hit = []	#This list will contain the ids of all queries that get a blast hit, i.e. even if it is non-signficant given the user specfied thresholds. For this set of reads we will attempt phylogenetic placement. No point of even trying if they dont get any blast hit.
-		for approach in methods:
-			if approach == 'pplacer' and len(cluster_counts) > 0:
-				query_count += 1
-				taxonomy_count = defaultdict(dict)
-				species_count = defaultdict(list) #this is actually not needed in the pplacer parsing, but I just need to empty it here in case it still contains stuff from the blast assignemtns, NEEDS TO BE CLEANED UP LATER
-				nohit_count = defaultdict(list) #again this is not needed here and I just empty it
-				print "\n##### PHYLOGENETIC PLACEMENT #####\n"
-				if not os.path.exists('PHYLOPLACE'):
-					os.makedirs('PHYLOPLACE')
-				os.chdir('PHYLOPLACE')
-				print "number of queries to be processed: %i" %len(some_hit)
-				print "write queries to file: \'%s_pplacer_queries.fasta\'\n" %queryID
-#				print some_hit
-
-				fas_out = open(queryID+'_pplacer_queries.fasta','w')
-				for read in some_hit:
-##					backup = unknown_seqs_dict[read].id
-##					unknown_seqs_dict[read].id = unknown_seqs_dict[read].description
-					backup = unknown_seqs_dict[read].description
-					unknown_seqs_dict[read].description = unknown_seqs_dict[read].id
-#					print unknown_seqs_dict[read].id
-					fas_out.write(unknown_seqs_dict[read].format("fasta"))
-##					unknown_seqs_dict[read].id = backup
-					unknown_seqs_dict[read].description = backup
-
-				fas_out.close()
-	
-				print "\n##### ALIGN QUERIES TO HMM PROFILE #####\n"
-				print "detecting reference hmm profile in reference package\n"
-				fh = open(args.refpkg+"/CONTENTS.json","r")
-				refpkg_content = json.load(fh)
-				profile = args.refpkg+'/'+refpkg_content['files']['profile']
-#				print profile
-				aln_fasta = args.refpkg+'/'+refpkg_content['files']['aln_fasta']
-#				print aln_fasta				
-				cmd = "hmmalign -o %s_queries_to_profile.sto --mapali %s %s %s_pplacer_queries.fasta" %(queryID, aln_fasta, profile, queryID)
-				print cmd
-				cmdlist = shlex.split(cmd)
-			        stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-				print stdout	#this currently doesnt print anything, i.e. there is not stdout
-				if stderr:
-					print stderr
-					sys.exit('some error from hmmalign')
-
-				print "\n##### RUNNING PHYLOGENETIC PLACEMENT #####\n"
-				cmd = "pplacer -c %s %s_queries_to_profile.sto -p --keep-at-most 3 -o %s.jplace" %(args.refpkg, queryID, queryID)
-				print cmd+'\n'
-				cmdlist = shlex.split(cmd)
-			        stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-				print stdout	#this currently doesnt print anything, i.e. there is not stdout
-				if stderr:
-					print stderr
-					sys.exit('some error from placer')
-				
-				print "\n##### INTERPRETING PPLACER RESULTS #####\n"
-				fh = open(queryID+".jplace","r")
-				jplace = json.load(fh)
-#				print "\n### find all placements###"
-				for pp_queries in jplace['placements']:
-#					print pp_queries['p'][0] #just consider the first placement
-					placement = pp_queries['p'][0][0] #take the first placement for now
-#					print "add taxid \'%s\' to global taxid dictionary" %placement
-					global_taxids_hit.append(placement) #add taxid of placement to global list
-					
-					if tax_dict[placement][1] == 'subspecies':
-						rank = 'species'
-					else:
-						rank = tax_dict[placement][1]
-
-					if not taxonomy_count.has_key(rank):
-						taxonomy_count[rank] = defaultdict(list)
-						for q in pp_queries['nm']:
-							taxonomy_count[rank][tax_dict[placement][2]].append(q[0])
-					else:
-						for q in pp_queries['nm']:
-							taxonomy_count[rank][tax_dict[placement][2]].append(q[0])
-#						taxonomy_count[rank][tax_dict[placement][2]].append('dummy')
-#					print tax_dict[placement][1]	#this is the taxonomy rank
-#					print tax_dict[placement][2]	#this is the scientific name
-
-#				print taxonomy_count
-
-#				sys.exit()
-
-
-			elif approach == 'blast' and len(cluster_counts) > 0:
-				query_count += 1
-				if not os.path.exists('BLAST_'+str(args.min_ident)):
-					os.makedirs('BLAST_'+str(args.min_ident))
-				os.chdir('BLAST_'+str(args.min_ident))
-				print "\n### RUNNING LOCAL BLAST ###\n"
-
-				print "running blast search against local database %s" % blast_db
-#				print "QUERIES: %s" %queryfile
-
-				blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, blast_out, args.n_threads) 
-				print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
-
-
-#				blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -out %s -num_threads %i -max_target_seqs 50" % (queryfile, blast_db, "blastn.standard.out", args.n_threads) 
-#				cmdlist = shlex.split(blast_cmd)
-#				stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() 
-
-
-				blast_handle = NcbiblastxCommandline(cmd='blastn', query=queryfile, db=blast_db, evalue=1e-20, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
-				stdout, stderr = blast_handle()
-
-				print '\n'+time.strftime("%c")+'\n'
-				print "\n### INTERPRETING BLAST RESULTS ###\n"
-#				if 
-				blast_result_handle = open(blast_out) #read in blast result (in xml format)
-
-				print "\nparse blast xml file\n"
-				blast_results = NCBIXML.parse(blast_result_handle) #parse blast xml file
-
-				print "get top 10% hits from blast output .. ",
-				res_dict = {}
-				res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit, strand_reversed=queries_to_rc)
-
-				if res_dict['format'] == 'gi':
-					print '\n'+time.strftime("%c")+'\n'
-					print "\nfetch taxids for gis\n"
-#					print "current length of taxid list: %i" %len(taxid_list)
-					taxid_list = gi_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gi_to_taxid_dict, v=args.verbose)
-#					print "current length of taxid list: %i" %len(taxid_list)
-
-					if len(gi_to_taxid_dict) > 0:
-						print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
-						rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
-
-					print "\ngenerate taxonomy dictionary\n"
-					#tax_dict = {}
-					make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
-				elif res_dict['format'] == 'unknown': #blast_filter function did not assign a format because no good hit was found to actually assess the format
-					if not tax_dict.has_key('tax_id'): #in this rare case I check if the tax_dict is in the proper format and if not
-                                        	tax_dict['tax_id'] = [] #just add the tax_id key and an empty list 
-
-				print "\nassign taxonomy\n"
-				taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)
-				###PREVIOUS VERSION HAS collected all query ids that had a hit with the database (even if it was not significant) in a list 'some_hit' limited phylogenetic placement to only these queries
-
-			if len(cluster_counts) == 0: #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering
-				query_count += 1
-
-			if taxonomy_count.has_key('nohit'):
-				tax_dict["tax_id"].insert(0,'nohit')
-
-
-			print '\n'+time.strftime("%c")+'\n'
-			print "\n######## RESULT SUMMARY ########\n"
-			out=open(queryID+"-results.txt","w")
-			outstring="\nThe sample %s contained %i valid query sequences:\n" % (queryID, querycount[queryID])
-			print outstring
-			out.write(outstring+"\n")
-
-
-#			print tax_dict['tax_id']
-			if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
-				tax_dict['tax_id'] = ['nohit']
-
-			for tax_rank in reversed(tax_dict["tax_id"]):
-#				print "The current rank to be checked is: %s" %tax_rank
-				if taxonomy_count.has_key(tax_rank):
-#					print "The current rank: %s" %tax_rank
-#					print taxonomy_count[tax_rank]
-					total_per_rank_count=int(0)
-					output=[]
-					for hit in sorted(taxonomy_count[tax_rank].keys()):
-						if not tax_rank == 'nohit':
-							global_taxids_hit.append(hit)
-
-#						print hit
-#						print "\t%s: %i" % (hit, len(taxonomy_count[tax_rank][hit])) #This is the count of unique clusters that were assigned
-						current_count=int(0)
-						current_reads=[]
-						for read in taxonomy_count[tax_rank][hit]:
-#							print "centroid: %s" % read
-#							print "read count in cluster: %i" % cluster_counts[read]
-##							print read.split('|')[1]
-#							current_count+=cluster_counts[read.split('|')[1]]	#sum up the number of actual reads in the clusters assigned to this taxon
-							current_count+=cluster_counts[read]	#sum up the number of actual reads in the clusters assigned to this taxon
-							if args.extract_centroid_reads:
-#								current_reads.append(read.split('|')[1])
-								current_reads.append(read)
-
-							elif args.extract_all_reads:
-#								current_reads.extend(cluster_reads[read.split('|')[1]])
-								current_reads.extend(cluster_reads[read])
-
-#							total_per_rank_count+=cluster_counts[read.split('|')[1]]
-							total_per_rank_count+=cluster_counts[read]
-						if not tax_rank == 'nohit':
-							output.append("\t%s: %i (%.2f %%)" % (tax_dict[hit][2], current_count, 100*float(current_count)/querycount[queryID]))
-#						print "\t%s: %i (%.2f %%)" % (hit, current_count, 100*float(current_count)/querycount[queryID])
-
-						#### add data to global dictionary for biom table
-#						if tax_rank != 'nohit':	#dont include the nohits in the biom output
-						if not global_taxa[tax_rank].has_key(hit):
-							global_taxa[tax_rank][hit] = []
-							global_clust[tax_rank][hit] = []
-							if query_count >= 2: #if this is already the 2+ query and the taxon has not been seen so far, I need to fill up the previous samples with count 0 for this taxon
-								for i in range(query_count-1):
-#										print "fill: %s" %hit
-									global_taxa[tax_rank][hit].append(int(0))
-									global_clust[tax_rank][hit].append(int(0))
-
-								
-							global_taxa[tax_rank][hit].append(int(current_count))
-							global_clust[tax_rank][hit].append(int(len(taxonomy_count[tax_rank][hit])))
-						else:
-							global_taxa[tax_rank][hit].append((current_count))
-							global_clust[tax_rank][hit].append((len(taxonomy_count[tax_rank][hit])))
-						
-						### print out reads
-						if current_reads: #This list is only non empty if either -e or -E was specified
-#							
-							if args.extract_centroid_reads:	#if the user has specified to extract centroid reads
-								#the following will sort the read ids by the number of reads in the respective cluster
-								temp_dict = defaultdict(list) #temporal dictionary 
-								for ID in current_reads:	#populate temporal dictionary with read counts as keys and centroid ids as values in a list (in case there are clusters that happen to have the same number of reads
-									temp_dict[cluster_counts[unknown_seqs_dict[ID].id]].append(ID)
-#									print "%s: %s" %(cluster_counts[unknown_seqs_dict[ID].id], ID)
-									
-								current_reads=[]	#empty the original list
-								for count in sorted(temp_dict.keys(), key=int, reverse=True):	#loop through the temporal dictionary reverse sorted by keys
-#									print temp_dict[count]
-									for read in temp_dict[count]:	#because the read ids are in a list I ll loop through here
-#										print "%s: %s" %(count, read)
-										current_reads.append(read)	#put the read ids back into the list sorted in descending order of the number reads in the respective clusters
-									
-
-							if hit == 'nohit':
-								fas_out = open('nohit.fasta',"w")
-							else:
-								fas_out = open(tax_dict[hit][2].replace(" ", "_").replace("/", "-")+'.fasta',"w")
-
-
-							for ID in current_reads:
-								backup = unknown_seqs_dict[ID].id
-								unknown_seqs_dict[ID].id = unknown_seqs_dict[ID].description
-##								unknown_seqs_dict[ID].description = "%s|%s" %(queryID, unknown_seqs_dict[ID].id)
-##								if args.extract_centroid_reads:
-##									unknown_seqs_dict[ID].id = "%s|%s|%i|%.2f" % (queryID, unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], float(cluster_counts[unknown_seqs_dict[ID].id])/querycount[queryID]*100)
-##									unknown_seqs_dict[ID].description = unknown_seqs_dict[ID].id
-#								print unknown_seqs_dict[ID]
-								fas_out.write(unknown_seqs_dict[ID].format("fasta"))
-								unknown_seqs_dict[ID].id = backup
-#								fas_out.write(">%s|%i\n%s\n" % ( unknown_seqs_dict[ID].id, cluster_counts[unknown_seqs_dict[ID].id], unknown_seqs_dict[ID].seq ))
-							fas_out.close()
-
-					outstring="%s: %i (%.2f %%)" % (tax_rank, total_per_rank_count, 100*float(total_per_rank_count)/querycount[queryID])
-					print outstring
-					out.write(outstring+"\n")
-					if tax_rank!='nohit':
-						for line in output:
-							print line
-							out.write(line+"\n")
-
-			out.close()
-			print "\n\n"
-			if len(cluster_counts) > 0:
-				os.chdir("../")#leave directory of current analysis
-				if tax_dict["tax_id"][0] == 'nohit':
-					del tax_dict["tax_id"][0] #remove the first element, i.e. 'nohit'
-#			del tax_dict["tax_id"][-1] #remove the last element, i.e. 'species'
-		
-			print '\n'+time.strftime("%c")+'\n'
-
-			####this is the end
-#			print "\nTHIS IS THE END"
-#			print '%s: %s' %(queryID,queries[queryID])
-#			print "query_count: %i" %query_count
-#			print 'global_taxa: %s' %global_taxa
-
-			for rank in global_taxa: #this is just to make sure that all taxa have the same number of counts
-				for taxon in global_taxa[rank]:
-					if len(global_taxa[rank][taxon]) < query_count:	#if the number of entries for the current taxon is smaller than the current index
-						global_taxa[rank][taxon].append(int(0))
-						global_clust[rank][taxon].append(int(0))
-						
-
-#			print "TAXIDS hit by query %s: %s" %(queryID, global_taxids_hit)
-
-		os.chdir('../')	#leave directory for query
 
