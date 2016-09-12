@@ -14,7 +14,7 @@ import time
 from Bio.Alphabet import generic_dna
 
 ### define variables
-VERSION = '0.3'
+VERSION = '0.4'
 Entrez.email = ""
 date = time.strftime("%d-%b-%Y").upper()
 geo_syn = {'Europe':["Albania","Andorra","Armenia","Austria","Azerbaijan","Belarus","Belgium","Bosnia and Herzegovina","Bulgaria","Croatia","Cyprus","Czech Republic","Denmark","Estonia","Finland","France","Georgia","Germany","Greece","Hungary","Iceland","Ireland","Italy","Kazakhstan","Kosovo","Latvia","Liechtenstein","Lithuania","Luxembourg","Macedonia","Malta","Moldova","Monaco","Montenegro","Netherlands","Norway","Poland","Portugal","Romania","Russia","San Marino","Serbia","Slovakia","Slovenia","Spain","Sweden","Switzerland","Turkey","Ukraine","United Kingdom"]}
@@ -126,9 +126,12 @@ def check_email(mail):
 parser = argparse.ArgumentParser(description='Fetch all available DNA sequences for a list of taxa and a given marker gene', prog='fetch_from_db.py')
 
 parser.add_argument("-t", "--taxlist", help="text file containing list of taxa to search for on Genbank", metavar="<FILE>", action="store")
+parser.add_argument("-a", "--accessionlist", help="text file containing list of accessions to fetch from Genbank", metavar="<FILE>", action="store")
 parser.add_argument("-m", "--marker", help="name of gene to be searched for (put in \"\" if the search term consists of more than one word", metavar="<string>", action="store")
 parser.add_argument("-G","--Genbank", help="search Genbank", action="store_true")
 parser.add_argument("-B","--BOLD", help="search BOLD", action="store_true")
+parser.add_argument("--no-download", help="search Genbank and just return the number of records found for list of taxa ", action="store_true")
+
 parser.add_argument("--geo", help="limit BOLD search to countries/continents. for more than one write as follows: \"Austria|UK\"", metavar="<string>", action="store")
 parser.add_argument("-o","--out", help="prefix for output files (default=\"out\")", metavar="<string>", action="store", default="out")
 parser.add_argument("-@", "--email", help='provide your email address for identification to NCBI', metavar='<email-address>', action="store", default="")
@@ -155,48 +158,73 @@ if args.taxlist:
 	taxa = sorted(list(set([line.strip() for line in open(args.taxlist)])))	#the list(set()) around the list comprehension removes duplicates
 #	print taxa
 
+if args.accessionlist:
+	fh = open(args.accessionlist,'r')
+	taxids = list(set([line.strip() for line in open(args.accessionlist)]))
+
 if args.Genbank:
 	print "\nQUERYING GENBANK\n"
-	if not args.marker:
-		print "no marker specified - will fetch all available sequences for the desired taxa"
-	else:
-		print "check for synonyms for \"%s\" (this is relevant only for Genbank searches)" %args.marker
-		for g in marker_syn.keys():
-#			print "checking %s" %g
-			if args.marker in marker_syn[g]:
-#				print "found: %s: %s" %(g, marker_syn[g])
-				if g in non_gene:
-					gene_search_term = " AND ((%s))" %") OR (".join(marker_syn[g])
-				else:
-					gene_search_term = " AND ((%s[gene]))" %"[gene]) OR (".join(marker_syn[g])
-				break
+	if args.taxlist:
+		if not args.marker:
+			print "no marker specified - will fetch all available sequences for the desired taxa"
+		else:
+			print "check for synonyms for \"%s\" (this is relevant only for Genbank searches)" %args.marker
+			for g in marker_syn.keys():
+#				print "checking %s" %g
+				if args.marker in marker_syn[g]:
+#					print "found: %s: %s" %(g, marker_syn[g])
+					if g in non_gene:
+						gene_search_term = " AND ((%s))" %") OR (".join(marker_syn[g])
+					else:
+						gene_search_term = " AND ((%s[gene]))" %"[gene]) OR (".join(marker_syn[g])
+					break
+	
+			if not gene_search_term:
+				gene_search_term = " AND (%s[gene])" %args.marker
 
-		if not gene_search_term:
-			gene_search_term = " AND (%s[gene])" %args.marker
-
-	print "\nfetching accessions ..\n"
-	for tax in taxa:
-		search = "("+tax+"[orgn])"+gene_search_term
-#		print search
-		handle = Entrez.esearch(db='nuccore', term=search, retmax=10000)
-		records = Entrez.read(handle)
-#		print records.keys()
-		if len(records['IdList']) < records['Count']: #['IdList'] contains the number of records downloaded, while ['Count'] holds the number of actually existing records
-			handle = Entrez.esearch(db='nuccore', term=search, retmax=records['Count'])
+		print "\nfetching accessions ..\n"
+		for tax in taxa:
+			search = "("+tax+"[orgn])"+gene_search_term
+#			print search
+			done = False
+			while not done:
+                		try:
+					handle = Entrez.esearch(db='nuccore', term=search, retmax=10000)
+                        		done = True
+                        	except:
+                        		print "connection closed - retrying entrez for query '%s'.." %tax
+		
 			records = Entrez.read(handle)
-		print "%s\t%s" %(tax, records['Count'])
-#		search_taxa[tax]=records['Count']
-		taxids.extend(records['IdList'])
-#		print "total: %s" %len(taxids)
-#		search_taxa[tax]={'Genbank': records['IdList']}
+#			print records.keys()
+			if len(records['IdList']) < records['Count']: #['IdList'] contains the number of records downloaded, while ['Count'] holds the number of actually existing records
+				
+				done = False
+				while not done:
+					try:
+						handle = Entrez.esearch(db='nuccore', term=search, retmax=records['Count'])
+						done = True
+					except:
+                                		print "connection closed - retrying"
+					
+				records = Entrez.read(handle)
+			print "#\t%s\t%s" %(tax, records['Count'])
+#			search_taxa[tax]=records['Count']
+			taxids.extend(records['IdList'])
+#			print "total: %s" %len(taxids)
+#			search_taxa[tax]={'Genbank': records['IdList']}
+	
+#		print "\ntotal: %s\n" %len(taxids)
 
-#	print "\ntotal: %s\n" %len(taxids)
+		taxids = list(set(taxids))
 
-	taxids = list(set(taxids))	
-#	print "\ntotal number of accessions fetched: %s\n" %len(list(set(taxids)))
-	print "\ntotal number of accessions fetched: %s\n" %len(taxids)
-#	print search_taxa
 
+#		print "\ntotal number of accessions fetched: %s\n" %len(list(set(taxids)))
+		print "\ntotal number of accessions fetched: %s\n" %len(taxids)
+#		print search_taxa
+
+	print taxids[:10]
+	if args.no_download:
+		sys.exit('\nDownload of sequence records ommitted\n')
 	#now download the records
 	print "\ndownloading the records .. processing %s accessions per batch\n" %batch_size
 #	for start in range(0,len(list(set(taxids))),batch_size):
@@ -204,7 +232,14 @@ if args.Genbank:
 #		end = min(len(list(set(taxids))), start+batch_size)
 		end = min(len(taxids), start+batch_size)
 #		handle = Entrez.efetch(db='nuccore', id=sorted(list(set(taxids)))[start:end], rettype='gb',retmax=batch_size)
-		handle = Entrez.efetch(db='nuccore', id=taxids[start:end], rettype='gb',retmax=batch_size)
+		done = False
+		while not done:
+			try:
+				handle = Entrez.efetch(db='nuccore', id=taxids[start:end], rettype='gb',retmax=batch_size)
+				done = True
+			except:
+				print "connection closed - retrying"
+
 		recs=SeqIO.parse(handle,'gb')
 		for rec in recs:
 			if not rec.id in record_dict.keys():
@@ -248,6 +283,7 @@ if args.BOLD:
 		
 			if len(rec.features[0].qualifiers['organism'][0].split(" ")) > 1:
 #				print "check if a taxid exists for the taxon %s\n" %rec.features[0].qualifiers['organism'][0]
+				
 				handle = Entrez.esearch(db="Taxonomy", term=rec.features[0].qualifiers['organism'][0])
 				taxon = Entrez.read(handle)
 				if taxon['IdList']: #if the search yielded a result
