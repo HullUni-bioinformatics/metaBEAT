@@ -222,7 +222,6 @@ if args.Genbank:
 		print "\ntotal number of accessions fetched: %s\n" %len(taxids)
 #		print search_taxa
 
-	print taxids[:10]
 	if args.no_download:
 		sys.exit('\nDownload of sequence records ommitted\n')
 	#now download the records
