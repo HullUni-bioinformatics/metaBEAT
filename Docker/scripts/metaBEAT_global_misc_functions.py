@@ -101,6 +101,7 @@ def find_target(BIOM, target):
     Find all samples and the proportion of reads a taxon was detected in
     """
 
+    import sys, warnings
     from biom.table import Table
 
     samples = BIOM.ids('sample')
