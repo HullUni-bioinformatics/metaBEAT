@@ -53,9 +53,11 @@ mv /src/taxonomy.db /usr/bin/
 
 #add scripts
 ADD scripts/fetch_from_db.py /usr/bin/
-ADD scripts/metaBEAT.py /usr/bin/
+#ADD scripts/metaBEAT.py /usr/bin/
 ADD scripts/metaBEAT_global.py /usr/bin/
 ADD scripts/jplace_to_biom.py /usr/bin/
+#add the functions to a PYTHONPATH location
+ADD scripts/metaBEAT_global_misc_functions.py /home/reprophylo/
 
 RUN mkdir /home/working
 

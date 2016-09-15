@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.96-global"
+VERSION="0.96.2-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -148,6 +148,7 @@ if len(sys.argv) < 2:	#if the script is called without any arguments display the
 
 ###FUNCTIONS
 
+## Funtions used in main script
 def parse_BIOM_denovo(table):
 
     from biom.table import Table
@@ -1824,11 +1825,10 @@ if args.blast or args.blast_xml:
 		if args.verbose:
 			print stdout
 	
-		blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
+		args.blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
 		os.chdir('..')
 	elif args.blast_db:
 		print "\n### USING PRECOMPILED BLAST DATABASE (%s) ###\n" %args.blast_db
-		blast_db = args.blast_db
 
 	os.chdir('../')
 
@@ -2344,12 +2344,12 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 			if not args.blast_xml:
 				print "\n### RUNNING BLAST ###\n"
 
-				print "running blast search against database %s" % blast_db
+				print "running blast search against database %s" % args.blast_db
 				blast_out = "global_blastn.out.xml"# % (args.marker, queryID)
-				blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (global_centroids, blast_db, blast_out, args.n_threads) 
+				blast_cmd = "blastn -query %s -db %s -evalue 1e-20 -outfmt 5 -out %s -num_threads %i -max_target_seqs 50" % (global_centroids, args.blast_db, blast_out, args.n_threads) 
 				print blast_cmd #this is just for the output, the actual blast command is run using the NCBI module below 
 
-				blast_handle = NcbiblastxCommandline(cmd='blastn', query=global_centroids, db=blast_db, evalue=1e-20, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
+				blast_handle = NcbiblastxCommandline(cmd='blastn', query=global_centroids, db=args.blast_db, evalue=1e-20, outfmt=5, out=blast_out, num_threads=args.n_threads, max_target_seqs=50)		
 				stdout, stderr = blast_handle()
 
 				args.blast_xml = os.path.abspath('global_blastn.out.xml')
