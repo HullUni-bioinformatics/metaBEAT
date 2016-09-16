@@ -101,22 +101,20 @@ def find_target(BIOM, target):
     Find all samples and the proportion of reads a taxon was detected in
     """
 
-    import sys, warnings
     from biom.table import Table
 
     samples = BIOM.ids('sample')
 
-    if not target in samples:
-        sys.exit("The taxon you are looking for '%s' was not detected" %target)
+    if not target in BIOM.ids(axis='observation'):
+        print "The taxon you are looking for '%s' was not detected" %target
+    else:
+        positives = BIOM.norm(axis='sample').data(target,'observation')
 
-    positives = BIOM.norm(axis='sample').data(target,'observation')
-
-    index=0
-    for o in positives:
-#        print o
-        if str(o) != '0.0':
-            print "%s\t(%.4f %%)" %(samples[index],o)
-        index+=1
+        index=0
+        for o in positives:
+            if str(o) != '0.0':
+                print "%s\t(%.4f %%)" %(samples[index],o*100)
+            index+=1
 
 
 
