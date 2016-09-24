@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.97-global"
+VERSION="0.97.1-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -762,9 +762,6 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
         line = re.sub('"','',line.strip())
         array = line.split(',')
 
-#	while array[-1] != 'species': #this should get rid of any 'subspecies' or 'varietas' levels
-#	    array.pop(-1)
-		
         if len(array) > 1:
             key = array.pop(0)
 #            if array[-1] == 'subspecies':
@@ -781,8 +778,8 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
                     local[-1] = deno.split('|')[1] #reference_taxa[deno]
                     out_tax_dict[deno.split('|')[1]] = local
 
-	while out_tax_dict['tax_id'][-1] != 'species': #this should get rid of any 'subspecies' or 'varietas' levels
-            out_tax_dict['tax_id'].pop(-1)
+#	while out_tax_dict['tax_id'][-1] != 'species': #this should get rid of any 'subspecies' or 'varietas' levels
+#            out_tax_dict['tax_id'].pop(-1)
 
 
 
@@ -885,6 +882,22 @@ def pre_pplacer_filter(blast_handle, m_ident=0.8, m_ali_length=0.95, v=0):
 	print "Number of queries directly binned to 'unassigned':\t%i" %len(result['nohit'])
 
 	return result		
+
+def makeblastdb(in_fasta, dbtype, out_prefix, v=0):
+
+	import os
+	import shlex, subprocess
+
+	cmd="makeblastdb -in %s -dbtype %s -out %s_blast_db" %(in_fasta, dbtype, out_prefix)
+        print cmd
+        cmdlist = shlex.split(cmd)
+        cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE)
+        stdout = cmd.communicate()[0]
+        if v:
+		print stdout
+        
+	return os.path.abspath('.')+"/"+"%s_blast_db" %out_prefix
+
 		
 def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, strand_reversed=None):
     "The function interprets a BLAST results handle and filters results subsequent taxonomic assignment using LCA"
@@ -1005,7 +1018,7 @@ def annotation_BIOM_table_with_taxonmy(BIOM_table, hits_per_tax_level, taxonomy_
 	"""
 	from biom.table import Table
 
-	print "##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
+	print "\n\n##### FORMATTING AND WRITING BIOM OUTPUT #####\n"
 
 	BIOM_tables_loc = {}
 	taxonomic_trees = {}
@@ -1100,7 +1113,7 @@ def add_fasta_to_kraken_db(db_in_fasta, db_path='./', db_name='custom', v=0):
     if stderr:
         print stderr
         
-def build_custom_kraken_db(db_path='./', db_name='custom', v=0):
+def build_custom_kraken_db(db_path='./', db_name='custom', threads=1, v=0):
     """
     adds a fasta file (formatted according to kraken guidelines) to kraken db
     """
@@ -1108,7 +1121,7 @@ def build_custom_kraken_db(db_path='./', db_name='custom', v=0):
     import shlex, subprocess
     
     print "## Build kraken database ##\n"
-    cmd="kraken-build --build --db %s/%s\n" %(db_path, db_name)
+    cmd="kraken-build --build --threads %s --db %s/%s\n" %(db_path, threads, db_name)
     
     print cmd
     cmdlist = shlex.split(cmd)
@@ -1118,13 +1131,13 @@ def build_custom_kraken_db(db_path='./', db_name='custom', v=0):
     if stderr:
         print stderr
     
-def full_build_custom_kraken_db(db_in_fasta, db_path='.', db_name='KRAKEN_DB', v=args.verbose):
+def full_build_custom_kraken_db(db_in_fasta, db_path='.', db_name='KRAKEN_DB', threads=1, v=args.verbose):
     
     print "\n### BUILD CUSTOM KRAKEN DATABASE ###\n"
     
     initiate_custom_kraken_db(db_path, db_name, v)
     add_fasta_to_kraken_db(db_in_fasta, db_path, db_name, v)
-    build_custom_kraken_db(db_path, db_name, v)
+    build_custom_kraken_db(db_path, db_name, threads, v)
     
 def run_kraken(kraken_db, queries_fasta, threads=args.n_threads):
     """
@@ -1171,6 +1184,17 @@ def parse_kraken_out(kraken_tab='kraken.out'):
     
     return result_dict
 
+def extract_taxid_list_from_result(dictionary):
+    """
+    The function extracts the values of a dictionary, which are themselves lists to a list
+    """
+
+    out_list = []
+
+    for val in dictionary.values():
+	out_list.extend(val)
+
+    return out_list
 def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
     """
     finds taxonomic level of assignemt based on taxid and bins into dictionary
@@ -1181,30 +1205,42 @@ def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
     tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
     minimum = tax_dict["tax_id"].index("kingdom")
     
+    if not tax_count.has_key('nohit'):
+        tax_count['nohit'] = {'nohit':[]}
+
     if kraken_out.has_key('nohit'):
-        if not tax_count.has_key('nohit'):
-            tax_count['nohit'] = {'nohit':[]}
-        tax_count['nohit']['nohit'].extend(kraken_out['nohit'])
+	tax_count['nohit']['nohit'].extend(kraken_out['nohit'])
 
     if kraken_out.has_key('hit'):
         
         for query in kraken_out['hit']:
 
+            #find the index of the initial assignment
+	    index = tax_dict["tax_id"].index(tax_dict[kraken_out['hit'][query][0]][1])
+
+	    #if already the initial assignemnt is above kingdom level
+	    if index < minimum:
+		if v:
+		    print "initial assignment above level kingdom for %s -> bin as 'nohit'" %query
+		tax_count['nohit']['nohit'].append(query)
+		continue
+
+	    #if the initial assignment hits one of the focal taxonomic levels
             if tax_dict[kraken_out['hit'][query][0]][1] in levels:
                 if v:
-                    print "\ndirect assignment for %s -> %s" %(query, kraken_out['hit'][query][0])
+                    print "direct assignment for %s -> %s" %(query, kraken_out['hit'][query][0])
                 if not tax_count[tax_dict[kraken_out['hit'][query][0]][1]].has_key(kraken_out['hit'][query][0]):
                     tax_count[tax_dict[kraken_out['hit'][query][0]][1]][kraken_out['hit'][query][0]] = []
                 tax_count[tax_dict[kraken_out['hit'][query][0]][1]][kraken_out['hit'][query][0]].append(query)
 
+	    #if the initial assignment does not hit one of the focal taxonomic levels
             else:
 		if v:
-	                print "invalid assignment level\n\t%s - %s - %s" %(kraken_out['hit'][query][0],tax_dict[kraken_out['hit'][query][0]][1], tax_dict[kraken_out['hit'][query][0]][2])
+	                print "invalid assignment for %s\t%s - %s - %s" %(query, kraken_out['hit'][query][0],tax_dict[kraken_out['hit'][query][0]][1], tax_dict[kraken_out['hit'][query][0]][2])
                 ok = 0
-                #find the index to count down from
-                index = tax_dict["tax_id"].index(tax_dict[kraken_out['hit'][query][0]][1])
-#                print index,tax_dict["tax_id"][index]
-                while index >= minimum and not ok:
+                
+		#we'll count down, i.e. move taxonomic levels up one by one until we hit a level that is acceptable
+		while index >= minimum and not ok:
                     index-=1
 
                     if tax_dict["tax_id"][index] in levels:
@@ -1218,7 +1254,7 @@ def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
                     tax_count[tax_dict["tax_id"][index]][taxid] = []
                 tax_count[tax_dict["tax_id"][index]][taxid].append(query)
                 
-
+    #cleanup - remove any taxonomic levels that did not get any assignments from the dictionary
     for key in tax_count.keys():
         if not tax_count[key]:
             del(tax_count[key])
@@ -1432,10 +1468,11 @@ if (args.min_ali_length > 1 or args.min_ali_length < 0) or (args.min_ident > 1 o
 if args.REFlist and args.blast_db:
 	print "\nPlease provide either a set of custom reference sequences OR a precompiled BLAST database\n"
 	sys.exit()
-elif args.blast_db:
+
+if args.blast_db:
+	args.blast_db = os.path.abspath(args.blast_db)
 	for f in glob.glob(args.blast_db+"*"):
 		if not bl_db_extensions:
-			args.blast_db = os.path.abspath(args.blast_db)
 			print "ok - seems the precompiled BLAST database contains all necessary files\n"
 			break
 		for i in range(len(bl_db_extensions)):
@@ -1795,43 +1832,8 @@ if args.taxids:
 if args.fasta:	#this bit writes out the sequences that will become the reference dataset
 	write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
 
-if args.blast or args.blast_xml:
-	
-	if args.blast_xml:
-		args.blast_xml = os.path.abspath(args.blast_xml) 
-
-	if not os.path.exists('GLOBAL'):
-		os.makedirs('GLOBAL')
-	os.chdir('GLOBAL')
-	
-	if args.REFlist:
-		if not os.path.exists('BLAST_'+str(args.min_ident)):
-			os.makedirs('BLAST_'+str(args.min_ident))
-		os.chdir('BLAST_'+str(args.min_ident))
-		print "\nestablishing taxonomy for reference sequences from custom database\n"
-		taxid_list = reference_taxa.values()
-#		taxid_list = [i for i in reference_taxa.values() if not 'denovo' in i] # reference_taxa.values()
-		make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
-
-		print "\n### BUILDING BLAST DATABASE ###\n"
-		if not args.fasta:	#if the reference sequences have not yet been written out as fasta it is done here
-			write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
-#		print "building blast db for marker %s\n" % args.marker
-		makeblastdb="makeblastdb -in refs.fasta -dbtype nucl -out %s_blast_db" % args.marker
-		print makeblastdb
-		cmdlist = shlex.split(makeblastdb)
-		cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE)
-		stdout = cmd.communicate()[0]
-		if args.verbose:
-			print stdout
-	
-		args.blast_db = os.path.abspath('.')+"/"+"%s_blast_db" % args.marker
-		os.chdir('..')
-	elif args.blast_db:
-		print "\n### USING PRECOMPILED BLAST DATABASE (%s) ###\n" %args.blast_db
-
-	os.chdir('../')
-
+if args.blast_xml:
+	args.blast_xml = os.path.abspath(args.blast_xml)
 
 print '\n'+time.strftime("%c")+'\n'
 querycount = defaultdict(int)
@@ -2336,10 +2338,19 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 
 	for approach in methods:
 		if approach == 'blast' and ( global_cluster_count > 0): # or args.blast_xml ):
-		
+	
+			print "\n##### BLAST #####\n"
+	
 			if not os.path.exists('BLAST_'+str(args.min_ident)):
 				os.makedirs('BLAST_'+str(args.min_ident))
 			os.chdir('BLAST_'+str(args.min_ident))
+
+			if args.REFlist:
+				print "\n### BUILDING BLAST DATABASE ###\n"
+				write_out_refs_to_fasta(ref_seqs=all_seqs, ref_taxids=reference_taxa)
+				args.blast_db = makeblastdb(in_fasta='refs.fasta', dbtype='nucl', out_prefix=args.marker)
+			elif args.blast_db:
+				print "\n### USING PRECOMPILED BLAST DATABASE (%s) ###\n" %args.blast_db
 
 			if not args.blast_xml:
 				print "\n### RUNNING BLAST ###\n"
@@ -2379,13 +2390,23 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 					print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
 					rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
 
-				print "\ngenerate taxonomy dictionary\n"
-				#tax_dict = {}
-				make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+#				print "\ngenerate taxonomy dictionary\n"
+#				#tax_dict = {}
+#				make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
 
 			elif res_dict['format'] == 'unknown': #blast_filter function did not assign a format because no good hit was found to actually assess the format
 				if not tax_dict.has_key('tax_id'): #in this rare case I check if the tax_dict is in the proper format and if not
                                        	tax_dict['tax_id'] = [] #just add the tax_id key and an empty list 
+
+			print "\nestablishing taxonomy for reference sequences from custom database\n"
+#			if not taxid_list:
+#		                if reference_taxa.values():
+#					taxid_list = reference_taxa.values()
+#				else:
+#					taxid_list = extract_taxid_list_from_result(res_dict['hit'])
+			taxid_list = extract_taxid_list_from_result(res_dict['hit'])
+
+                	make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
 
 			print "\nassign taxonomy\n"
 			taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)
@@ -2397,7 +2418,6 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 
 			print "\n##### BLAST ANALYSIS DONE #####\n"
 			print "Find result tables in '%s'\n\n" %os.path.abspath('.')
-			print BIOM_tables_per_method
 			os.chdir('../')
                 	print '\n'+time.strftime("%c")+'\n'
 
@@ -2470,15 +2490,11 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 				os.makedirs('KRAKEN')
 			os.chdir('KRAKEN')
 			
-			print "\nestablishing taxonomy for reference sequences from custom database\n"
-	                taxid_list = reference_taxa.values()
-                	make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
-
 			if not args.kraken_db:
 				# Format Sequences for input to kraken database build
 				gb_to_kraken_db(all_seqs, args.marker)
 				#Build database
-				full_build_custom_kraken_db(args.marker+'.kraken.fasta', db_path='.', db_name='KRAKEN_DB', v=args.verbose)
+				full_build_custom_kraken_db(args.marker+'.kraken.fasta', db_path='.', db_name='KRAKEN_DB', threads=args.n_threads, v=args.verbose)
 				args.kraken_db = os.path.abspath('./KRAKEN_DB')
 				print "\nSuccessuflly generated at: %s\n" %args.kraken_db
 			else:
@@ -2486,14 +2502,23 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 
 			run_kraken(kraken_db=args.kraken_db, queries_fasta=global_centroids, threads=args.n_threads)
 			kraken_out_dict = parse_kraken_out(kraken_tab='kraken.out')
+			
+			print "\nestablishing taxonomy for reference sequences from custom database\n"
+#	                if reference_taxa.values():
+#				taxid_list = reference_taxa.values()
+#			else:
+#				taxid_list = extract_taxid_list_from_result(kraken_out_dict['hit'])
+#			
+			taxid_list = extract_taxid_list_from_result(kraken_out_dict['hit'])
+
+                	make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+
 			taxonomy_count = assign_taxonomy_kraken(kraken_out=kraken_out_dict, tax_dict=tax_dict, v=args.verbose)
 
 			if not tax_dict.has_key('tax_id'): #this is only relevant in the rare case when no valid sequence made it throuh the trimming/clustering and no reference taxids have been produced earlier from a custom reference
                 		tax_dict['tax_id'] = ['nohit']
 			
 			BIOM_tables_per_method[approach] = annotation_BIOM_table_with_taxonmy(BIOM_table=BIOM_tables_per_method['OTU_denovo'], hits_per_tax_level=taxonomy_count, taxonomy_dictionary=tax_dict, prefix=args.output_prefix, method=approach)	
-
-			print BIOM_tables_per_method
 
 			if args.rm_kraken_db:
 				print "\nRemoving Kraken database\n"

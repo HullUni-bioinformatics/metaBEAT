@@ -1,6 +1,6 @@
 #! /usr/bin/python
 
-VERSION="0.97-global"
+VERSION="0.97.1-global"
 
 def vsearch_cluster_full_length(infile, cluster_match, threads, sampleID, verbose=0):
     """
