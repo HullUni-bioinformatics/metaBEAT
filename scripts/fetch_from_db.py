@@ -14,10 +14,10 @@ import time
 from Bio.Alphabet import generic_dna
 
 ### define variables
-VERSION = '0.4'
+VERSION = '0.5'
 Entrez.email = ""
 date = time.strftime("%d-%b-%Y").upper()
-geo_syn = {'Europe':["Albania","Andorra","Armenia","Austria","Azerbaijan","Belarus","Belgium","Bosnia and Herzegovina","Bulgaria","Croatia","Cyprus","Czech Republic","Denmark","Estonia","Finland","France","Georgia","Germany","Greece","Hungary","Iceland","Ireland","Italy","Kazakhstan","Kosovo","Latvia","Liechtenstein","Lithuania","Luxembourg","Macedonia","Malta","Moldova","Monaco","Montenegro","Netherlands","Norway","Poland","Portugal","Romania","Russia","San Marino","Serbia","Slovakia","Slovenia","Spain","Sweden","Switzerland","Turkey","Ukraine","United Kingdom"]}
+Genbank=True
 marker_syn = {'rbcl':['rbcl', 'rbc-l', 'rbcL', 'RbcL', 'RBCl', 'RBCL', 'ribulose 1,5-biphosphate carboxylase large subunit',
 	     'ribulose-1,5-biphosphate carboxylase/oxygenase large subunit', 'ribulose-1,5-bisphophate carboxylase oxygenase',
 	     'ribulose-1, 5-bisphosphate carboxulase/oxygenase large subunit', 'ribulose-1,5-bisphosphate carboxylase',
@@ -69,12 +69,44 @@ genes=[]
 gene_search_term = ''
 taxids = []
 #search_taxa = {}
-record_dict = {}
+#record_dict = {}
 batch_size=1000
-BOLD_records = []
+#BOLD_records = []
 gb_accessions = []
+files = []
 ####################
 #define functions
+
+def accessions_to_file(prefix, accessions_list):
+	
+	out = open(prefix+'.accessions.txt','w')
+	for l in accessions_list:
+		out.write(l+'\n')
+	out.close()
+
+def concatenate_files(prefix, files):
+
+	with open(prefix+'.gb', 'w') as outfile:
+    		for fname in files:
+        		with open(fname) as infile:
+            			for line in infile:
+                			outfile.write(line)
+def cleanup_files(files):
+
+	import os
+	for f in files:
+		os.remove(f)	
+
+def write_to_file(prefix, record_d):
+
+	from Bio import SeqIO
+
+	output_handle = open(prefix+'.gb','w')
+	for key in record_d.keys():
+        	SeqIO.write(record_d[key], output_handle, "gb")
+
+	output_handle.close()
+
 def get_accession(record):
 	"""Given a SeqRecord get the accession"""
 	accession = record.name
@@ -123,16 +155,16 @@ def check_email(mail):
 
 
 ##########
-parser = argparse.ArgumentParser(description='Fetch all available DNA sequences for a list of taxa and a given marker gene', prog='fetch_from_db.py')
+parser = argparse.ArgumentParser(description='Search/Fetch all available DNA sequences for a list of taxa/accessions and a given marker gene from Genbank', prog='fetch_from_db.py')
 
 parser.add_argument("-t", "--taxlist", help="text file containing list of taxa to search for on Genbank", metavar="<FILE>", action="store")
 parser.add_argument("-a", "--accessionlist", help="text file containing list of accessions to fetch from Genbank", metavar="<FILE>", action="store")
 parser.add_argument("-m", "--marker", help="name of gene to be searched for (put in \"\" if the search term consists of more than one word", metavar="<string>", action="store")
-parser.add_argument("-G","--Genbank", help="search Genbank", action="store_true")
-parser.add_argument("-B","--BOLD", help="search BOLD", action="store_true")
+#parser.add_argument("-G","--Genbank", help="search Genbank", action="store_true")
+#parser.add_argument("-B","--BOLD", help="search BOLD", action="store_true")
 parser.add_argument("--no-download", help="search Genbank and just return the number of records found for list of taxa ", action="store_true")
 
-parser.add_argument("--geo", help="limit BOLD search to countries/continents. for more than one write as follows: \"Austria|UK\"", metavar="<string>", action="store")
+#parser.add_argument("--geo", help="limit BOLD search to countries/continents. for more than one write as follows: \"Austria|UK\"", metavar="<string>", action="store")
 parser.add_argument("-o","--out", help="prefix for output files (default=\"out\")", metavar="<string>", action="store", default="out")
 parser.add_argument("-@", "--email", help='provide your email address for identification to NCBI', metavar='<email-address>', action="store", default="")
 
@@ -142,16 +174,16 @@ args = parser.parse_args()
 
 if len(sys.argv) < 2:   #if the script is called without any arguments display the usage
 	parser.print_usage()
-	sys.exit(1)
+	sys.exit(1/arg)
 
 if args.email:
 	Entrez.email = args.email
 Entrez.email = check_email(mail = Entrez.email)
 
-if not args.Genbank and not args.BOLD:
-	print "\nPlease specify a database to be searched\n"
-	parser.print_usage()
-	sys.exit(1)
+#if not args.Genbank and not args.BOLD:
+#	print "\nPlease specify a database to be searched\n"
+#	parser.print_usage()
+#	sys.exit(1)
 
 if args.taxlist:
 	fh = open(args.taxlist,'r')
@@ -162,7 +194,8 @@ if args.accessionlist:
 	fh = open(args.accessionlist,'r')
 	taxids = list(set([line.strip() for line in open(args.accessionlist)]))
 
-if args.Genbank:
+#if args.Genbank:
+if Genbank:
 	print "\nQUERYING GENBANK\n"
 	if args.taxlist:
 		if not args.marker:
@@ -220,14 +253,19 @@ if args.Genbank:
 
 #		print "\ntotal number of accessions fetched: %s\n" %len(list(set(taxids)))
 		print "\ntotal number of accessions fetched: %s\n" %len(taxids)
+		accessions_to_file(args.out, accessions_list=taxids)
 #		print search_taxa
 
 	if args.no_download:
 		sys.exit('\nDownload of sequence records ommitted\n')
 	#now download the records
-	print "\ndownloading the records .. processing %s accessions per batch\n" %batch_size
+	print "\ndownloading %i records .. processing %s accessions per batch\n" %(len(taxids), batch_size)
 #	for start in range(0,len(list(set(taxids))),batch_size):
+	batch_count = 1
+	download_count = 0
+	acc_worklist = taxids[:]
 	for start in range(0,len(taxids),batch_size):
+		record_dict = {}
 #		end = min(len(list(set(taxids))), start+batch_size)
 		end = min(len(taxids), start+batch_size)
 #		handle = Entrez.efetch(db='nuccore', id=sorted(list(set(taxids)))[start:end], rettype='gb',retmax=batch_size)
@@ -240,10 +278,40 @@ if args.Genbank:
 				print "connection closed - retrying"
 
 		recs=SeqIO.parse(handle,'gb')
+		#cleanup - only necessary in weird cases
 		for rec in recs:
 			if not rec.id in record_dict.keys():
 				record_dict[rec.id]=rec
-		print "dowloaded\t%i unique records" %len(record_dict)	
+
+		#write the downloaded sequences to file		
+		out_prefix = '%s.%07d' %(args.out,batch_count)
+		write_to_file(out_prefix, record_dict)
+		files.append(out_prefix+'.gb')
+		
+		download_count+=len(record_dict)
+
+		#write the remaining gi's to file for backup
+		if (len(acc_worklist) > batch_size):
+			acc_worklist = acc_worklist[batch_size:]
+			accessions_to_file(args.out, accessions_list=acc_worklist)
+			print "[%s]\tbatch: %07d\t%i unique records downloaded\t-> %s.gb\t(total: %i (%.2f %%); remaining: %i (%.2f %%) -> %s.accessions.txt)" %(time.strftime("%a %b %d %Y %H:%M:%S"), batch_count,len(record_dict), out_prefix, download_count, (float(download_count)/len(taxids)*100), len(acc_worklist), (float(len(acc_worklist))/len(taxids)*100), args.out)	
+		else:
+			acc_worklist = []
+			os.remove(args.out+'.accessions.txt')
+			print "[%s]\tbatch: %07d\t%i unique records downloaded\t-> %s.gb\t(total: %i (%.2f %%); remaining: %i -> DONE!)" %(time.strftime("%a %b %d %Y %H:%M:%S"), batch_count, len(record_dict), out_prefix, download_count, (float(download_count)/len(taxids)*100), len(acc_worklist))		
+#			print "dowloaded\t%i unique records\t-> %s.gb\t(total downloaded: %i; remaining: %i -> DONE!)" %(len(record_dict), out_prefix, download_count, len(acc_worklist))		
+
+		batch_count+=1
+		
+print "\nConcatenate all files\t-> %s.gb\n" %args.out
+concatenate_files(args.out, files)
+cleanup_files(files)
+ 
+
+sys.exit()
+
+#QUERYING BOLD ATM DISABLED
+geo_syn = {'Europe':["Albania","Andorra","Armenia","Austria","Azerbaijan","Belarus","Belgium","Bosnia and Herzegovina","Bulgaria","Croatia","Cyprus","Czech Republic","Denmark","Estonia","Finland","France","Georgia","Germany","Greece","Hungary","Iceland","Ireland","Italy","Kazakhstan","Kosovo","Latvia","Liechtenstein","Lithuania","Luxembourg","Macedonia","Malta","Moldova","Monaco","Montenegro","Netherlands","Norway","Poland","Portugal","Romania","Russia","San Marino","Serbia","Slovakia","Slovenia","Spain","Sweden","Switzerland","Turkey","Ukraine","United Kingdom"]}
 
 if args.BOLD:
 	print "\nQUERYING BOLD - atm experimental\n"
@@ -345,6 +413,7 @@ for key in record_dict.keys():
 
 output_handle.close()
 	
+
 #wget -O- "http://www.boldsystems.org/index.php/API_Public/sequence?taxon=Chordata&geo=Florida|Germany|France" > test.fasta
 
 #http://www.boldsystems.org/index.php/API_Public/specimen?taxon=Aleiodes%20rossicus&format=tsv
