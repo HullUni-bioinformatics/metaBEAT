@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.97.1-global"
+VERSION="0.97.2-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -163,18 +163,15 @@ def parse_BIOM_denovo(table):
     
     return t
     
-def add_taxonomy_to_biom(per_tax_level_clusters, per_tax_level_trees, biom_in):
+def add_taxonomy_to_biom(per_tax_level_clusters, per_tax_level_trees, biom_in, method=False):
 
+    	from biom.table import Table
+	
 	dictionary = {}
 	levels = ['nohit', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
 	biom_out = biom_in.copy()
 	otu_order = []
 	trees = []
-
-#	print per_tax_level_trees
-
-#	for otu in biom_out.ids(axis='observation'):
-#		print otu
 
 	for level in reversed(levels):
 		if level in per_tax_level_clusters:
@@ -222,15 +219,23 @@ def add_taxonomy_to_biom(per_tax_level_clusters, per_tax_level_trees, biom_in):
 #	print sorted_biom_out.to_tsv(header_key='taxonomy', header_value='taxomomy')
 #	print "\n\n"
 
+	#rename samples - add method to sample id and metadata
+	if method:
+		rename = {}
+		sample_metadata = {}
+		for s in sorted_biom_out.ids(axis='sample'):
+			rename[s] = s+'.'+method
+			sample_metadata[s] = {}
+			sample_metadata[s]['method'] = method
+		sorted_biom_out.add_metadata(sample_metadata, axis='sample')
+		sorted_biom_out.update_ids(rename, axis='sample')
+
 	return sorted_biom_out
 
 def collapse_biom_by_taxonomy(in_table):
 
-#	sample_metadata = {}
-#        for s_id in in_table.ids(axis='sample'):
-#		sample_metadata[s_id] = {'metadata':{}}
+    	from biom.table import Table
 
-	
 	bin_f = lambda id_, x: x['taxonomy'][-1].split("__")[1]
 	biom_out_collapsed = in_table.collapse(bin_f, norm=False, min_group_size=1, axis='observation')
 #	for taxon in biom_out_collapsed.ids(axis='observation'):
@@ -261,6 +266,8 @@ def collapse_biom_by_taxonomy(in_table):
 
 def pa_and_collapse_by_taxonomy(in_table):
 
+    	from biom.table import Table
+	
 	bin_f = lambda id_, x: x['taxonomy'][-1].split("__")[1]
 
 #	print "\n### sorted presence-absence OTU table with taxonomy ###\n"
@@ -288,6 +295,21 @@ def pa_and_collapse_by_taxonomy(in_table):
 #	print "\n\n"
 
 	return pa_sorted_biom_collapsed
+
+def add_sample_metadata_to_biom(in_table, metadata, v=0):
+
+    	from biom.table import Table
+	
+	sample_metadata = {}
+	for s in in_table.ids(axis='sample'):
+		if v:
+        		print "adding metadata to: %s" %s
+        	sample_metadata[s] = {}
+		for meta in metadata[s].keys():
+			sample_metadata[s][meta] = metadata[s][meta]
+
+	#add metadata to individual table
+	in_table.add_metadata(sample_metadata, axis='sample')
 
 def find_full_taxonomy(per_tax_level, taxonomy_dictionary):
 	
@@ -1024,7 +1046,7 @@ def annotation_BIOM_table_with_taxonmy(BIOM_table, hits_per_tax_level, taxonomy_
 	taxonomic_trees = {}
 	taxonomic_trees = find_full_taxonomy(per_tax_level=hits_per_tax_level, taxonomy_dictionary=taxonomy_dictionary)
 
-	BIOM_tables_loc['OTU_taxonomy'] = add_taxonomy_to_biom(per_tax_level_clusters=hits_per_tax_level, per_tax_level_trees=taxonomic_trees, biom_in=BIOM_table)
+	BIOM_tables_loc['OTU_taxonomy'] = add_taxonomy_to_biom(per_tax_level_clusters=hits_per_tax_level, per_tax_level_trees=taxonomic_trees, biom_in=BIOM_table, method=method)
 	BIOM_tables_loc['taxon_taxonomy'] = collapse_biom_by_taxonomy(in_table=BIOM_tables_loc['OTU_taxonomy'])
 	BIOM_tables_loc['cluster_taxonomy'] = pa_and_collapse_by_taxonomy(in_table=BIOM_tables_loc['OTU_taxonomy'])
 
@@ -1439,6 +1461,7 @@ if args.kraken_db:
 #if args.blast or args.blast_xml or args.pplace:
 taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
 
+
 if args.pplace:
 	if not (args.refpkg or args.jplace):
 		print "\nTo perform phylogenetic placement with pplacer metaBEAT currently expects a reference package to be specified via the --refpkg flag\n"
@@ -1468,6 +1491,9 @@ if (args.min_ali_length > 1 or args.min_ali_length < 0) or (args.min_ident > 1 o
 if args.REFlist and args.blast_db:
 	print "\nPlease provide either a set of custom reference sequences OR a precompiled BLAST database\n"
 	sys.exit()
+
+if args.metadata:
+	args.metadata = os.path.abspath(args.metadata)	
 
 if args.blast_db:
 	args.blast_db = os.path.abspath(args.blast_db)
@@ -1633,27 +1659,6 @@ if args.querylist:
 			print "adapter file is not a valid file"
 			parser.print_help()
 			sys.exit(0)
-
-	if args.metadata:
-		fh = open(args.metadata, "r")
-		header_line = fh.readline().strip()
-		headers = header_line.split(",")
-		for line in fh:
-			line = line.strip()
-			cols = line.split(",")
-			if not len(cols) == len(headers):
-				print "sample %s in metadata file has an invalid number of columns - should have %i / has %i\n" %(cols[0], len(headers), len(cols))
-				sys.exit()
-			for i in range(1,len(cols)):
-#				print cols[i]
-				metadata[cols[0]][headers[i]] = cols[i]
-#		print metadata
-		for sID in queries.keys():
-			if not metadata.has_key(sID):
-				print "The sample %s has no metadata available\n" %sID
-#			else:
-#				print metadata[sID]
-		fh.close()
 
 if args.BIOM_input:
 	print "\nparsing BIOM table\n"
@@ -2319,14 +2324,32 @@ else: #I would get there if I gave the denovo BIOM table via the command line
 		os.makedirs('GLOBAL')
 	os.chdir('GLOBAL')
 	print "creating local copies of relevant files if necessary"
-	shutil.copy(args.BIOM_input, './')
-	shutil.copy(global_centroids, './')
+	if not os.path.isfile(args.BIOM_input.split("/")[-1]):
+		shutil.copy(args.BIOM_input, './')
+	if not os.path.isfile(global_centroids.split("/")[-1]):
+		shutil.copy(global_centroids, './')
 
 	
-
-#	if not global_cluster_count:
-#		global_cluster_count = 1 #To go for the blast route 'global_cluster_count' needs to be > 0 (see below). This is just to make sure this is set in case reading in a BIOM table
-
+if args.metadata:
+	print "\nprovided metadata in file: %s .. " %args.metadata,
+	fh = open(args.metadata, "r")
+	header_line = fh.readline().strip()
+	headers = header_line.split(",")
+	for line in fh:
+		line = line.strip()
+		cols = line.split(",")
+		if not len(cols) == len(headers):
+			print "\n\tsample %s in metadata file has an invalid number of columns - should have %i / has %i\n" %(cols[0], len(headers), len(cols))
+			sys.exit()
+		for i in range(1,len(cols)):
+			metadata[cols[0]][headers[i]] = cols[i]
+	for sID in BIOM_tables_per_method['OTU_denovo'].ids(axis='sample'):
+		if not metadata.has_key(sID):
+			print "\n\tThe sample %s has no metadata available\n" %sID
+			sys.exit()
+	fh.close()
+	print "ok!\n"
+	add_sample_metadata_to_biom(in_table=BIOM_tables_per_method['OTU_denovo'], metadata=metadata, v=args.verbose)
 
 if args.blast or args.blast_xml or args.pplace or args.kraken:
 	if args.blast: # or args.blast_xml:
