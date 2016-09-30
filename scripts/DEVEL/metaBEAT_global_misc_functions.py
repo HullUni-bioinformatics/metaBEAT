@@ -1,6 +1,6 @@
 #! /usr/bin/python
 
-VERSION="0.97.2-global"
+VERSION="0.97.3-global"
 
 def vsearch_cluster_full_length(infile, cluster_match, threads, sampleID, verbose=0):
     """
@@ -166,6 +166,41 @@ def collapse_biom_by_taxonomy(in_table):
 
 	return biom_out_collapsed_sorted
 
+def BIOM_tsv_to_R_transpose(in_tsv, out_csv):
+    """
+    Parse a biom table in tsv format and transpose it for input into R
+    """
+    
+    from biom import Table
+    
+    tsv = open(in_tsv)
+    #in_tsv = open('COI-trim30min100-merge-c3-id97-OTU-taxonomy.kraken.tsv')
+    func = lambda x : x
+    intable = Table.from_tsv(tsv,obs_mapping=None, sample_mapping=None, process_func=func)
+    outtable = intable.transpose()
+    out=open("transposed.tsv","w")
+    out.write(outtable.to_tsv(header_key=None, header_value=None))
+    out.close()
+
+    #refine
+    intable = open('transposed.tsv','r')
+    temp = intable.next()
+
+    out=''
+    for line in intable:
+        if line.startswith('#'):
+            if line.strip().endswith('taxomomy'):
+                print "Removing taxonomy"
+                line = ",".join(line.strip().split("\t")[:-1]).replace('#OTU ID','Sample').replace('\t',',')+'\n'
+            line = line.replace('#OTU ID','Sample').replace('\t',',')
+            out+=line
+        else:
+            line = line.replace('\t',',')
+            out+=line
+
+    outtable = open(out_csv,'w')
+    outtable.write(out)
+    outtable.close()
 
 def load_BIOM(table):
     """
@@ -243,6 +278,130 @@ def plot_BIOM_as_heatmap(BIOM, width_in=5, target_png=None):
     if target_png:
         fig.savefig(target_png, dpi=100)
 
+def BIOM_return_by_tax_level(taxlevel, BIOM):
+    """
+    Returns a new BIOM object containing only OTUS that were assigned at least to a given taxonomic level
+    """
+    
+    from biom.table import Table
+    
+    return_OTUs = {}
+    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'unassigned']
+    search_level=''
+    
+    if not taxlevel in levels:
+        raise KeyError("The taxonomic level you are trying to search: '%s', is not valid" %level)
+    
+    #check if the first OTU has 'taxonomy' metadata attached, if yes assume all others have too and resume
+    if not 'taxonomy' in BIOM.metadata(axis='observation')[0]:
+        raise KeyError('The BIOM table you are trying to screen does not have taxonomy metadata attached to it')
+    else:
+        print "Found taxonomy metadata with OTUs - ok!"
+    
+    if taxlevel == 'unassigned':
+        search_level = 0;
+    else:
+        search_level = int(levels.index(taxlevel))
+                           
+    OTUs=BIOM.ids(axis='observation')
+    per_OTU_metadata = BIOM.metadata(axis='observation')
+                           
+    for i in range(len(per_OTU_metadata)):
+        if len(per_OTU_metadata[i]['taxonomy']) > search_level:
+            return_OTUs[OTUs[i]] = per_OTU_metadata[i]['taxonomy']
+                           
+    outBIOM = BIOM.filter(return_OTUs.keys(), invert=False, axis='observation',inplace=False)
+    
+    return outBIOM
+
+def BIOM_return_clipped_taxonomy(taxlevel, BIOM):
+    """
+    Returns a BIOM table for which the taxonomy has been clipped at a certain level
+    """
+    
+    from biom.table import Table
+    import numpy as np
+    
+    return_OTUs = {}
+    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'unassigned']
+    clip_level=''
+    to_drop=[]
+    
+    if not taxlevel in levels:
+        raise KeyError("The taxonomic level you are trying to search: '%s', is not valid" %level)
+    
+    clip_level = int(levels.index(taxlevel))+1
+    #check if the first OTU has 'taxonomy' metadata attached, if yes assume all others have too and resume
+    if not 'taxonomy' in BIOM.metadata(axis='observation')[0]:
+        raise KeyError('The BIOM table you are trying to screen does not have taxonomy metadata attached to it')
+    else:
+        print "Found taxonomy metadata with OTUs - ok!"
+        
+    sample_ids = BIOM.ids(axis='sample')
+    observation_ids = BIOM.ids(axis='observation')
+    data_to_biom = []
+    sample_metadata = BIOM.metadata(axis='sample')
+    observation_metadata = BIOM.metadata(axis='observation')
+    
+    for OTU in observation_ids:
+        orig=BIOM.data(OTU, axis='observation')
+        data_to_biom.append(orig)
+        
+    data = np.asarray(data_to_biom)
+    
+    for i in range(len(observation_metadata)):
+        if len(observation_metadata[i]['taxonomy']) > clip_level:
+            observation_metadata[i]['taxonomy'] = observation_metadata[i]['taxonomy'][:clip_level]
+        if 'unknown' in observation_metadata[i]['taxonomy'][-1]:
+            print "fishy: %s" %observation_metadata[i]['taxonomy']
+            to_drop.append(observation_ids[i])
+#        print observation_metadata[i]['taxonomy']
+        
+    #construct adjusted table
+    outtable = Table(data, observation_ids, sample_ids, table_id='OTU table', sample_metadata=sample_metadata, observation_metadata=observation_metadata)
+    
+    if to_drop:
+        outtable.filter(to_drop, invert=True, axis='observation',inplace=True)
+        
+    
+    return outtable
+
+def per_taxon_abundance(BIOM,tsv):
+    """
+    Return a table (tsv)"""
+    
+    #Get observation ids
+    obs_ids = BIOM.ids(axis='observation')
+    
+    #Determine the total number of samples
+    total = len(BIOM.ids(axis='sample'))
+
+    
+    by_count = {}
+    #For each OTU determine the number of samples it is missing from 
+    for o in obs_ids:
+        count=0
+        temp = BIOM.data(o, axis='observation')
+        
+        for i in reversed(range(len(temp))):
+            if temp[i] == 0:
+                count+=1
+    
+        if not by_count.has_key(int(len(temp)-count)):
+            by_count[int(len(temp)-count)] = []
+        by_count[int(len(temp)-count)].append(o)
+    
+    #could be sorted by abundance
+    out = "#taxon\tsample_count\tsample_proportion\n"
+    out_fh = open(tsv,'w')
+    for c in sorted(by_count):
+        for t in sorted(by_count[c]):
+            out+="%s\t%i\t%.2f\n" %(t,c,float(c)/total)
+
+    out_fh.write(out)
+    out_fh.close()
+
+
 def write_BIOM(BIOM, target_file, BIOM_out=True, tsv_out=True, program='metaBEAT v.'+VERSION):
     """
     Write BIOM object to file. Will create two files - 1. in table in BIOM format; 2. table in tsv format
@@ -258,6 +417,77 @@ def write_BIOM(BIOM, target_file, BIOM_out=True, tsv_out=True, program='metaBEAT
             out=open(target_file+".tsv","w")
             out.write(BIOM.to_tsv(header_key='taxonomy', header_value='taxomomy'))
             out.close()
+
+def adjust_metadata_sample_ids(intable, metadata):
+    """
+    Adjust metadata sample ids to match the sample ids and the order in table
+    """
+    
+    
+    #get sample ids in table
+    ids = []
+    table = open(intable,'r')
+    table.next()
+    
+    for line in table:
+        ids.append(line.split(",")[0])
+        
+    table.close()
+#    print ids
+    
+    #parse metadata
+    meta_in = open(metadata,'r')
+    out = meta_in.next()
+
+    meta_ids = {}
+    meta_data = {}
+    for line in meta_in:
+        l = line.strip().split(",")
+#        print l[0]
+        for i in range(len(ids)):
+            if ids[i].startswith(l[0]):
+                if not l[0] in meta_ids:
+                    meta_ids[l[0]] = []
+                meta_ids[l[0]].append(ids[i])
+                
+                if len(meta_ids[l[0]]) == 1:
+#                    print "Found matches for %s: %s" %(l[0],meta_ids[l[0]] )
+                    l[0] = meta_ids[l[0]][0]
+                    meta_data[i] = l
+                else:
+                    raise KeyError("ambiguous match for %s" %(l[0]))
+                
+        else:
+            "Did not find a match for %s" %l[0]
+    
+    meta_in.close()
+    
+    if len(meta_ids) == len(ids):
+	print "ok - id numbers match up\n"
+        to_correct = 1 #always sort 
+        for s in meta_ids:
+            if not s == meta_ids[s][0]:
+                print "metadata id '%s' will be adjusted to table id '%s'" %(s, meta_ids[s][0])
+                to_correct+=1
+#            else:
+#                print "%s is identical to %s" %(s,meta_ids[s][0])
+
+        if to_correct:
+            print "\nadjusting (if necessary) and sorting (if necessary) ids in file %s .." %metadata,
+            #convert
+            outfh = open(metadata,'w')
+            for s in sorted(meta_data):
+                out+=",".join(meta_data[s])+'\n'
+        
+            outfh.write(out)
+            outfh.close()
+            print "Done\n"
+
+        else:
+            print "Nothing to do here - sample ids in '%s' match those in '%s'" %(metadata, intable)
+       
+    else:
+        print "Did not find metadata for all samples. "
 
 
 def find_target(BIOM, target):
