@@ -463,16 +463,17 @@ def adjust_metadata_sample_ids(intable, metadata):
     meta_in.close()
     
     if len(meta_ids) == len(ids):
+	print "ok - id numbers match up\n"
         to_correct = 1 #always sort 
         for s in meta_ids:
             if not s == meta_ids[s][0]:
-                print "Sample ids in '%s' match those in '%s'" %(metadata, intable)
+                print "metadata id '%s' will be adjusted to table id '%s'" %(s, meta_ids[s][0])
                 to_correct+=1
 #            else:
 #                print "%s is identical to %s" %(s,meta_ids[s][0])
 
         if to_correct:
-            print "ok - updating file %s" %metadata
+            print "\nadjusting (if necessary) and sorting (if necessary) ids in file %s .." %metadata,
             #convert
             outfh = open(metadata,'w')
             for s in sorted(meta_data):
@@ -480,11 +481,11 @@ def adjust_metadata_sample_ids(intable, metadata):
         
             outfh.write(out)
             outfh.close()
-        
+            print "Done\n"
+
         else:
             print "Nothing to do here - sample ids in '%s' match those in '%s'" %(metadata, intable)
-        
-        
+       
     else:
         print "Did not find metadata for all samples. "
 
