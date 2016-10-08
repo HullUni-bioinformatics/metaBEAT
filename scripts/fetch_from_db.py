@@ -14,7 +14,7 @@ import time
 from Bio.Alphabet import generic_dna
 
 ### define variables
-VERSION = '0.5'
+VERSION = '0.6'
 Entrez.email = ""
 date = time.strftime("%d-%b-%Y").upper()
 Genbank=True
@@ -209,11 +209,12 @@ if Genbank:
 					if g in non_gene:
 						gene_search_term = " AND ((%s))" %") OR (".join(marker_syn[g])
 					else:
-						gene_search_term = " AND ((%s[gene]))" %"[gene]) OR (".join(marker_syn[g])
-					break
-	
-			if not gene_search_term:
-				gene_search_term = " AND (%s[gene])" %args.marker
+                                                gene_search_term = " AND (((%s)[gene]))" %")[gene]) OR ((".join(marker_syn[g])
+                                        break
+
+                        if not gene_search_term:
+                                gene_search_term = " AND ((%s)[gene])" %args.marker
+
 
 		print "\nfetching accessions ..\n"
 		for tax in taxa:
