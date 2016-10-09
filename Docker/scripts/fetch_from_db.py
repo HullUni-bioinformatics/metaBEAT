@@ -298,7 +298,8 @@ if Genbank:
 			print "[%s]\tbatch: %07d\t%i unique records downloaded\t-> %s.gb\t(total: %i (%.2f %%); remaining: %i (%.2f %%) -> %s.accessions.txt)" %(time.strftime("%a %b %d %Y %H:%M:%S"), batch_count,len(record_dict), out_prefix, download_count, (float(download_count)/len(taxids)*100), len(acc_worklist), (float(len(acc_worklist))/len(taxids)*100), args.out)	
 		else:
 			acc_worklist = []
-			os.remove(args.out+'.accessions.txt')
+                        if os.path.isfile(args.out+'.accessions.txt'):
+                                os.remove(args.out+'.accessions.txt')
 			print "[%s]\tbatch: %07d\t%i unique records downloaded\t-> %s.gb\t(total: %i (%.2f %%); remaining: %i -> DONE!)" %(time.strftime("%a %b %d %Y %H:%M:%S"), batch_count, len(record_dict), out_prefix, download_count, (float(download_count)/len(taxids)*100), len(acc_worklist))		
 #			print "dowloaded\t%i unique records\t-> %s.gb\t(total downloaded: %i; remaining: %i -> DONE!)" %(len(record_dict), out_prefix, download_count, len(acc_worklist))		
 
