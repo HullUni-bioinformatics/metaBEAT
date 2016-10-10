@@ -1,6 +1,6 @@
 #! /usr/bin/python
 
-VERSION="0.97.3-global"
+VERSION="0.97.4-global"
 
 def vsearch_cluster_full_length(infile, cluster_match, threads, sampleID, verbose=0):
     """
@@ -8,7 +8,7 @@ def vsearch_cluster_full_length(infile, cluster_match, threads, sampleID, verbos
     """
     import shlex, subprocess
 
-    cmd = "vsearch --cluster_fast %s --id %.2f --strand both --threads %s --centroids %s_centroids.fasta --uc %s.uc" % (infile, cluster_match, threads, sampleID, sampleID)
+    cmd = "vsearch --cluster_fast %s --id %.2f --strand both --threads %s --centroids %s_centroids.fasta --uc %s.uc --query_cov 1" % (infile, cluster_match, threads, sampleID, sampleID)
     if verbose:
         print cmd
     cmdlist = shlex.split(cmd)
@@ -202,18 +202,34 @@ def BIOM_tsv_to_R_transpose(in_tsv, out_csv):
     outtable.write(out)
     outtable.close()
 
-def load_BIOM(table):
+def load_BIOM(table, informat='json', v=1):
     """
-    load a BIOM table from BIOM format
+    load a BIOM table from BIOM format. Default format is 'json'.
     """
     from biom.table import Table
     import json
+    import sys
+    
+    informats = ['json','tsv']
+    if not informat in informats:
+        print "\nPlease specify a valid BIOM input format. Currently we support: '%s'.\n" %"', '".join(informats)
+    else:
+        if v:
+            print "\nSpecified BIOM input format '%s' - ok!" %(informat)
+    
+    if informat == 'json':
+        with open(table) as data_file:
+            data = json.load(data_file)
+        t = Table.from_json(data)
 
-    with open(table) as data_file:
-        data = json.load(data_file)
-    t = Table.from_json(data)
-
+    elif informat == 'tsv':
+        tsv = open(in_tsv)
+        func = lambda x : x
+        t = Table.from_tsv(tsv, obs_mapping=None, sample_mapping=None, process_func=func)
+        tsv.close()
+        
     return t
+
 
 
 def plot_BIOM_as_heatmap(BIOM, width_in=5, target_png=None):
@@ -278,15 +294,18 @@ def plot_BIOM_as_heatmap(BIOM, width_in=5, target_png=None):
     if target_png:
         fig.savefig(target_png, dpi=100)
 
-def BIOM_return_by_tax_level(taxlevel, BIOM):
+def BIOM_return_by_tax_level(taxlevel, BIOM, invert=False):
     """
-    Returns a new BIOM object containing only OTUS that were assigned at least to a given taxonomic level
+    Returns a new BIOM object containing only OTUS that were assigned at least to a given taxonomic level.
+    invert=True will invert the selection, e.g. if you invert 'genus' you'll get everything that was at least family.
+    More useful perhaps, if you invert 'kindom' you'll get everything unassigned.
     """
     
     from biom.table import Table
     
     return_OTUs = {}
     levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'unassigned']
+    abr = {'kingdom':'k__', 'unassigned':'__'}
     search_level=''
     
     if not taxlevel in levels:
@@ -302,17 +321,89 @@ def BIOM_return_by_tax_level(taxlevel, BIOM):
         search_level = 0;
     else:
         search_level = int(levels.index(taxlevel))
-                           
+ 
+
     OTUs=BIOM.ids(axis='observation')
     per_OTU_metadata = BIOM.metadata(axis='observation')
                            
     for i in range(len(per_OTU_metadata)):
         if len(per_OTU_metadata[i]['taxonomy']) > search_level:
-            return_OTUs[OTUs[i]] = per_OTU_metadata[i]['taxonomy']
+            if search_level == 0:
+                if per_OTU_metadata[i]['taxonomy'][0].startswith(abr[taxlevel]):
+                    return_OTUs[OTUs[i]] = per_OTU_metadata[i]['taxonomy']
+            else:
+                return_OTUs[OTUs[i]] = per_OTU_metadata[i]['taxonomy']
                            
-    outBIOM = BIOM.filter(return_OTUs.keys(), invert=False, axis='observation',inplace=False)
+    outBIOM = BIOM.filter(return_OTUs.keys(), invert=invert, axis='observation',inplace=False)
     
     return outBIOM
+
+def drop_BIOM_taxonomy(BIOM):
+    """
+    Returns a biom object, if taxonomy was present in the input table it will be removed.
+    """
+    from biom.table import Table
+    import numpy as np
+    
+    #make an explicit physical copy of the input table so that the original is not altered
+    working_table = BIOM.copy()
+    
+    #collect the data from the original table
+    sample_ids = working_table.ids(axis='sample')
+    observation_ids = working_table.ids(axis='observation')
+    data_to_biom = []
+    sample_metadata = working_table.metadata(axis='sample')
+    observation_metadata = working_table.metadata(axis='observation')
+    
+    #remove any taxonomy metadata from copy of original BIOM table
+    for o in observation_metadata:
+        del(o['taxonomy'])
+    
+    for OTU in observation_ids:
+        orig=working_table.data(OTU, axis='observation')
+        data_to_biom.append(orig)
+        
+    data = np.asarray(data_to_biom)
+    
+    #construct adjusted table
+    
+    outtable = Table(data, observation_ids, sample_ids, table_id='OTU table', sample_metadata=sample_metadata, observation_metadata=observation_metadata)
+    
+    return outtable
+
+
+def extract_fasta_by_BIOM_OTU_ids(in_fasta, BIOM, out_fasta):
+    """
+    Extracts all sequence records from a fasta file that match the observation ids in a biom object
+    """
+    from biom.table import Table
+    from Bio import SeqIO
+    import sys
+    
+    ids = BIOM.ids(axis='observation')
+    print "Looking to extract %i sequences" %len(ids)
+    
+    print "Parsing %s" %in_fasta
+    seqs = SeqIO.parse(open(in_fasta, 'r'), 'fasta')
+    out_seqs = []
+    total_seqs = 0
+    
+    for s in seqs:
+        total_seqs+=1
+        if s.id in ids:
+            out_seqs.append(s)
+
+    print "identified %i target sequences .." %len(out_seqs),
+    
+    if len(out_seqs) == len(ids):
+        print "OK!"
+        print "Writing sequences to file: %s" %out_fasta
+        out=open(out_fasta,'w')
+        SeqIO.write(out_seqs, out, 'fasta')
+    else:
+        print "was looking for %i -> Abort!"
+        sys.exit()
+
 
 def BIOM_return_clipped_taxonomy(taxlevel, BIOM):
     """
@@ -402,25 +493,108 @@ def per_taxon_abundance(BIOM,tsv):
     out_fh.close()
 
 
-def write_BIOM(BIOM, target_file, BIOM_out=True, tsv_out=True, program='metaBEAT v.'+VERSION):
+def write_BIOM(BIOM, target_prefix, outfmt=['json','tsv'], program='metaBEAT v.'+VERSION, v=1):
     """
-    Write BIOM object to file. Will create two files - 1. in table in BIOM format; 2. table in tsv format
+    Write BIOM object to file. Per default it will create two files:
+    1. in table in json format
+    2. table in tsv format
+    change format via outfmt.
     """
     from biom.table import Table
+    import json
 
-    if BIOM_out:
-        out=open(target_file+".biom","w")
+    outformats = ['json','tsv']
+    
+    for outformat in outfmt:
+        if not outformat in outformats:
+            print "\n'%s' is not a valid format. Currently we support: '%s'.\n" %(outformat, "', '".join(outformats))
+#        else:
+#            print "Requested BIOM output format '%s' - ok!" %(outformat)
+    
+    if 'json' in outfmt:
+        if v:
+            print "Writing '%s.biom'" %target_prefix
+        out=open(target_prefix+".biom","w")
         BIOM.to_json(program, direct_io=out)
         out.close()
 
-    if tsv_out:
-            out=open(target_file+".tsv","w")
-            out.write(BIOM.to_tsv(header_key='taxonomy', header_value='taxomomy'))
-            out.close()
+    if 'tsv' in outformat:
+        if v:
+            print "Writing '%s.tsv'" %target_prefix
+        out=open(target_prefix+".tsv","w")
+        out.write(BIOM.to_tsv(header_key='taxonomy', header_value='taxomomy'))
+        out.close()
+
+
+def check_metadata_csv(in_csv, BIOM=False, v=1):
+    """
+    Parse a csv file that is intended as metadata for biom table and check basic sanity.
+    Also check against BIOM table if provided.
+    """
+    
+    import sys
+    from biom.table import Table
+    
+    metadata = {}
+    
+    fh = open(in_csv, "r")
+    header_line = fh.readline().strip()
+    headers = header_line.split(",")
+    for line in fh:
+        line = line.strip()
+        cols = line.split(",")
+        if not len(cols) == len(headers):
+            print "\n\tsample %s in metadata file has an invalid number of columns - should have %i / has %i\n" %(cols[0], len(headers), len(cols))
+            sys.exit()
+        for i in range(1,len(cols)):
+            if not cols[0] in metadata:
+                metadata[cols[0]] = {}
+            metadata[cols[0]][headers[i]] = cols[i]
+    fh.close()
+    
+    if v:
+        print "\nprovided metadata in file: %s - ok!\n " %in_csv
+        
+    if BIOM:
+        for sID in BIOM.ids(axis='sample'):
+            if not metadata.has_key(sID):
+                print "\n\tThe sample %s has no metadata available\n" %sID
+                sys.exit()
+    if v:
+        print "Checking metadata against table - ok!\n"
+
+    return metadata
+
+
+def add_sample_metadata_to_biom(in_table, metadata, v=0):
+    """
+    Add sample metadata to biom object. Returns new biom object.
+    """
+    
+    from biom.table import Table
+    
+    working_table = in_table.copy()
+    
+    sample_metadata = {}
+    for s in working_table.ids(axis='sample'):
+        if v:
+            print "adding metadata to: %s" %s
+        sample_metadata[s] = {}
+        for meta in metadata[s].keys():
+            sample_metadata[s][meta] = metadata[s][meta]
+
+    #add metadata to individual table
+    working_table.add_metadata(sample_metadata, axis='sample')
+    
+    return working_table
+
 
 def adjust_metadata_sample_ids(intable, metadata):
     """
-    Adjust metadata sample ids to match the sample ids and the order in table
+    Adjust metadata sample ids to match the sample ids and the order in table. 
+    'intable' is the OTU table in csv format as produced by `BIOM_tsv_to_R_transpose`.
+    'metadata' is the metadata as csv file.
+    As both input files are csv format, they can also be swapped. The ids in the second table will always be adjusted to those in the first table.
     """
     
     
@@ -511,5 +685,29 @@ def find_target(BIOM, target):
                 print "%s\t(%.4f %%)" %(samples[index],o*100)
             index+=1
 
+
+def add_sample_metadata_to_BIOM_file(BIOM_file, metadata_csv, outprefix, informat='json', outformat=['json','tsv'], v=1):
+    """
+    Add sample metadata to file.
+    Parse input biom table, check metadata file for sanity, add metadata to biom object, write table in desired format.
+    """
+    
+    import sys
+    
+    BIOM_in = load_BIOM(table=BIOM_file, informat=informat, v=v)
+    if v:
+        print "Loading BIOM table - ok!"
+        
+    metadat = check_metadata_csv(in_csv=metadata_csv, BIOM=BIOM_in, v=v)
+    if v:
+        print "Checking metadata - ok!"
+    
+    working_table = add_sample_metadata_to_biom(in_table=BIOM_in, metadata=metadat, v=v)
+    if v:
+        print "Adding metadata - ok!\n"
+    
+    write_BIOM(BIOM=working_table, target_prefix=outprefix, outfmt=outformat, v=v)
+    if v:
+        print "Writing to files - ok\n"
 
 
