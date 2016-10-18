@@ -14,7 +14,7 @@ import time
 from Bio.Alphabet import generic_dna
 
 ### define variables
-VERSION = '0.6'
+VERSION = '0.7'
 Entrez.email = ""
 date = time.strftime("%d-%b-%Y").upper()
 Genbank=True
@@ -167,6 +167,7 @@ parser.add_argument("--no-download", help="search Genbank and just return the nu
 #parser.add_argument("--geo", help="limit BOLD search to countries/continents. for more than one write as follows: \"Austria|UK\"", metavar="<string>", action="store")
 parser.add_argument("-o","--out", help="prefix for output files (default=\"out\")", metavar="<string>", action="store", default="out")
 parser.add_argument("-@", "--email", help='provide your email address for identification to NCBI', metavar='<email-address>', action="store", default="")
+parser.add_argument("-v","--verbose", help="turn verbose output on - will display the full search term for every taxon", action="store_true")
 
 parser.add_argument("--version", action="version", version='%(prog)s v.'+VERSION)
 args = parser.parse_args()
@@ -207,19 +208,20 @@ if Genbank:
 				if args.marker in marker_syn[g]:
 #					print "found: %s: %s" %(g, marker_syn[g])
 					if g in non_gene:
-						gene_search_term = " AND ((%s))" %") OR (".join(marker_syn[g])
+						gene_search_term = ' AND (("%s"))' %'") OR ("'.join(marker_syn[g])
 					else:
-                                                gene_search_term = " AND (((%s)[gene]))" %")[gene]) OR ((".join(marker_syn[g])
+                                                gene_search_term = ' AND ((("%s")[gene]))' %'")[gene]) OR (("'.join(marker_syn[g])
                                         break
 
                         if not gene_search_term:
-                                gene_search_term = " AND ((%s)[gene])" %args.marker
+                                gene_search_term = ' AND (("%s")[gene])' %args.marker
 
 
 		print "\nfetching accessions ..\n"
 		for tax in taxa:
 			search = "("+tax+"[orgn])"+gene_search_term
-#			print search
+			if args.verbose:
+				print search
 			done = False
 			while not done:
                 		try:
