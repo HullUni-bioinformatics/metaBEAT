@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.97.4-global"
+VERSION="0.97.5-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -1143,13 +1143,13 @@ def build_custom_kraken_db(db_path='./', db_name='custom', threads=1, v=0):
     import shlex, subprocess
     
     print "## Build kraken database ##\n"
-    cmd="kraken-build --build --threads %s --db %s/%s\n" %(db_path, threads, db_name)
+    cmd="kraken-build --build --threads %s --db %s/%s\n" %(threads, db_path, db_name)
     
     print cmd
     cmdlist = shlex.split(cmd)
     stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-#    if v and stdout:
-#        print stdout
+    if v and stdout:
+        print stdout
     if stderr:
         print stderr
     
