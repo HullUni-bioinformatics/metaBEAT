@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.97.6-global"
+VERSION="0.97.7-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -121,6 +121,8 @@ blast_group.add_argument("--blast_xml", help="path to Blast result in xml format
 #blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.80)", type=float, metavar="<FLOAT>", action="store", default="0.80")
 blast_group.add_argument("--min_ali_length", help="minimum alignment length in percent of total query length (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
+blast_group.add_argument("--bitscore_skim_LCA", help="Only BLAST hits with bitscores differing by less than this factor from the top hit (bitscore skim window) will be considered for LCA (0-1; default: 0.1)", type=float, metavar="<FLOAT>", action="store", default="0.1")
+blast_group.add_argument("--bitscore_skim_adjust_off", help="Per default a 100%% identity BLAST top hit across the minimum alignment length triggers an adjustment of the bitscore skim window to '0', i.e. only hits with bitscores as good as the top hit are considered for LCA. This flag switches this behaviour off.", action="store_true")
 blast_group.add_argument("--min_bit", help="minimum bitscore (default: 80)", type=int, metavar="<INT>", action="store", default="80")
 phyloplace_group = parser.add_argument_group('Phylogenetic placement', 'The parameters in this group affect phylogenetic placement')
 phyloplace_group.add_argument("--refpkg", help="PATH to refpkg for pplacer", metavar="<DIR>", action="store")
@@ -134,7 +136,7 @@ kraken_group.add_argument("--rm_kraken_db", help="Remove Kraken database after s
 biom_group = parser.add_argument_group('BIOM OUTPUT','The arguments in this groups affect the output in BIOM format')
 biom_group.add_argument("-o","--output_prefix", help="prefix for BIOM output files (default='metaBEAT')", action="store", default="metaBEAT")
 biom_group.add_argument("--metadata", help="comma delimited file containing metadata (optional)", action="store")
-biom_group.add_argument("--mock_meta_data", help="add mock metadata to the samples in the BIOM output", action="store_true")
+#biom_group.add_argument("--mock_meta_data", help="add mock metadata to the samples in the BIOM output", action="store_true")
 
 Entrez_group = parser.add_argument_group('Entrez identification','metaBEAT is querying the NCBI Entrez databases, please provide an email address for identification')
 Entrez_group.add_argument("-@", "--email", help='provide your email address for identification to NCBI', metavar='<email-address>', action="store", default="")
@@ -820,7 +822,7 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
                             
 #	        print "\nUPDATE:\n%s" %tax_count
     	    if len(b_filtered['hit']) == 0:
-	        print "all queries have been successfully assigned to a taxonomy"
+	        print "\nall queries have been successfully assigned to a taxonomy"
 	    else:
 	        print "\nLCA detection failed for %i queries:\n%s" %(len(b_filtered['hit']), b_filtered['hit'])
 
@@ -1002,12 +1004,28 @@ def makeblastdb(in_fasta, dbtype, out_prefix, v=0):
 	return os.path.abspath('.')+"/"+"%s_blast_db" %out_prefix
 
 		
-def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, strand_reversed=None):
-    "The function interprets a BLAST results handle and filters results subsequent taxonomic assignment using LCA"
+def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, bit_score_cutoff=0.1, bit_score_cutoff_adjust_off=False, strand_reversed=None):
+    """
+    The function interprets a BLAST results handle and filters results for subsequent taxonomic assignment using LCA
+    """
+   
+    #Summarize filter parameters:
+    print "\tFiltering parameters:"
+    print "\tMinimum bitscore: %s" %m_bitscore
+    print "\tMinimum alignment length: %s" %m_ali_length
+    print "\tMinimum identity across alignment length: %s" %m_ident
+    print "\tBitscore skim window for LCA: %s" %bit_score_cutoff
+    print "\tBitscore skim window adjustment (for 100% identity matches): ",
+    if bit_score_cutoff_adjust_off:
+	print "off\n"
+    else:
+	print "on\n"
+    ###############  
+ 
     result = {'format':''}
     count=0
     for res in b_result:
-        bit_score_cutoff = 0.9 #that's the default setting, i.e. top 10% of top bit score
+        bit_score_cutoff_set = 1-bit_score_cutoff #specify the bit score cutoff (n
         count += 1
         if v:
             print "\nquery: %s" % res.query #the current query
@@ -1043,11 +1061,15 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, s
             if not result.has_key('hit'):
                 result['hit'] = {}
 
-            if (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) == 1): #if we have a full length 100 % match adjust the bitscore so window so that only this hit is considered
-                bit_score_cutoff = 1
-                if v:
-                        print "\n100% match:\n"
-                        print "Query length: %i\nAlignment length: %s\nnumber of identitites: %s" %(res.query_length, str(len(res.alignments[0].hsps[0].query)), str(res.alignments[0].hsps[0].identities))
+            if (float(res.alignments[0].hsps[0].identities)/len(res.alignments[0].hsps[0].query) == 1): #if we have a 100 % match of at least the minimum length, adjust the bitscore cutoff so that only hits with the same bitscore as the top hit are considered for the LCA
+		message = "100%% match - Alignment length: %s" %str(len(res.alignments[0].hsps[0].query))
+		if not bit_score_cutoff_adjust_off:
+                        bit_score_cutoff_set = 1
+                        if v:
+                                message+=" -> adjusting bitscore cutoff"
+		if v:
+                        print message
+                
             max_bit_score = res.alignments[0].hsps[0].bits #record the maximum bitscore
 
             result['hit'][res.query]=[] #create empty list for query
@@ -1059,7 +1081,7 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, s
                     else:
                         result['format']='taxid'
 
-                if alignment.hsps[0].bits >= (max_bit_score*bit_score_cutoff): #if a hit has a bitscore that falls within the top 90 % of the bitscores recorded
+                if alignment.hsps[0].bits >= (max_bit_score*bit_score_cutoff_set): #if a hit has a bitscore that falls within the specified window it will be collected for later LCA
 #                    print alignment.title.split("|")[1]
                     if result['format'] == 'gi':
                         result['hit'][res.query].append(alignment.title.split("|")[1])
@@ -2511,9 +2533,9 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 			print "\nparse blast xml file\n"
 			blast_results = NCBIXML.parse(blast_result_handle) #parse blast xml file
 
-			print "get top 10% hits from blast output .. ",
+			print "\nfiltering BLAST output\n"
 			res_dict = {}
-			res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit, m_ali_length=args.min_ali_length, strand_reversed=queries_to_rc)
+			res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit, m_ali_length=args.min_ali_length, bit_score_cutoff=args.bitscore_skim_LCA, bit_score_cutoff_adjust_off=args.bitscore_skim_adjust_off, strand_reversed=queries_to_rc)
 
 			if res_dict['format'] == 'gi':	#This is the case if BLAST was performed against Genbank
 				print '\n'+time.strftime("%c")+'\n'
