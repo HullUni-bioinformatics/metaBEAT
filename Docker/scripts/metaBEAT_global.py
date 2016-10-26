@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.97.5-global"
+VERSION="0.97.6-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -126,7 +126,9 @@ phyloplace_group = parser.add_argument_group('Phylogenetic placement', 'The para
 phyloplace_group.add_argument("--refpkg", help="PATH to refpkg for pplacer", metavar="<DIR>", action="store")
 phyloplace_group.add_argument("--jplace", help="phylogenetic placement result from prefious pplacer run in *.jplace format", metavar="<FILE>", action="store")
 kraken_group = parser.add_argument_group('Kraken', 'The parameters in this group affect taxonomic assignment using Kraken')
+kraken_group.add_argument("--jellyfish_hash_size", help="jellyfish hash size to control memory usage during kraken database building. A table size of '6400M' will require ~44G of RAM. '2700M' -> 20G RAM. ", type=str, default=False, metavar="<STR>", action="store")
 kraken_group.add_argument("--kraken_db", help="PATH to a Kraken database", metavar="<DIR>", action="store")
+kraken_group.add_argument("--kraken_score_threshold", help="minimum proportion of k-mers to support assignment (0-1; default: 0)", metavar="<FLOAT>", default=0, type=float, action="store")
 kraken_group.add_argument("--rm_kraken_db", help="Remove Kraken database after successful completion", action="store_true")
 
 biom_group = parser.add_argument_group('BIOM OUTPUT','The arguments in this groups affect the output in BIOM format')
@@ -311,63 +313,139 @@ def add_sample_metadata_to_biom(in_table, metadata, v=0):
 	#add metadata to individual table
 	in_table.add_metadata(sample_metadata, axis='sample')
 
+
+def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
+    """
+    finds taxonomic level of assignemt based on taxid and bins into dictionary
+    """
+    from collections import defaultdict
+
+    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
+    tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
+    minimum = tax_dict["tax_id"].index("kingdom")
+
+    print "\nInterpreting kraken results and adjust to standard taxonomic levels (%s)\n" %(", ".join(levels))
+
+    if not tax_count.has_key('nohit'):
+        tax_count['nohit'] = {'nohit':[]}
+
+    if kraken_out.has_key('nohit'):
+        tax_count['nohit']['nohit'].extend(kraken_out['nohit'])
+
+    if kraken_out.has_key('hit'):
+
+        for query in kraken_out['hit']:
+
+            #find the index of the initial assignment
+            index = tax_dict["tax_id"].index(tax_dict[kraken_out['hit'][query][0]][1])
+
+            #if already the initial assignemnt is above kingdom level
+            if index < minimum:
+                if v:
+                    print "initial assignment above level kingdom for %s -> bin as 'nohit'" %query
+                tax_count['nohit']['nohit'].append(query)
+                continue
+
+            #if the initial assignment hits one of the focal taxonomic levels
+            if tax_dict[kraken_out['hit'][query][0]][1] in levels and tax_dict[kraken_out['hit'][query][0]][2]:
+                if v:
+                    print "direct assignment for %s -> %s (%s)" %(query, kraken_out['hit'][query][0], tax_dict[kraken_out['hit'][query][0]][2])
+                if not tax_count[tax_dict[kraken_out['hit'][query][0]][1]].has_key(kraken_out['hit'][query][0]):
+                    tax_count[tax_dict[kraken_out['hit'][query][0]][1]][kraken_out['hit'][query][0]] = []
+                tax_count[tax_dict[kraken_out['hit'][query][0]][1]][kraken_out['hit'][query][0]].append(query)
+
+            #if the initial assignment does not hit one of the focal taxonomic levels
+            else:
+                if v:
+                        print "invalid assignment level for %s\t%s - %s - '%s'" %(query, tax_dict[kraken_out['hit'][query][0]][1], kraken_out['hit'][query][0], tax_dict[kraken_out['hit'][query][0]][2])
+                        print "\tsearching through higher taxonomic levels:"
+                ok = 0
+
+                #we'll count down, i.e. move taxonomic levels up one by one until we hit a level that is acceptable
+                while index >= minimum and not ok:
+                    index-=1
+                    if tax_dict["tax_id"][index] in levels: #check if the current taxonomic level is a valid one
+                                                    
+                        if tax_dict[kraken_out['hit'][query][0]][index]: #check if there is actually a taxid availble for the lineage at this level
+                            if v:
+                                print "\tlevel '%s' is among the targets - taxid present -> OK!" %tax_dict["tax_id"][index]
+                            ok = 1
+                        else: #
+                            if v:
+                                print "\tlevel '%s' is among the targets, but no taxid available at this level -> moving on" %tax_dict["tax_id"][index]
+                        
+                            
+#                    else:
+#                        print "\tlevel '%s' is not acceptable" %tax_dict["tax_id"][index]
+                        
+                if ok:
+                    taxid = tax_dict[kraken_out['hit'][query][0]][index]
+
+                    if v:
+                        print "\tadjusted assignment for %s -> %s (%s)" %(query, taxid, tax_dict[taxid][2])
+                    if not tax_count[tax_dict["tax_id"][index]].has_key(taxid):
+                        tax_count[tax_dict["tax_id"][index]][taxid] = []
+                    tax_count[tax_dict["tax_id"][index]][taxid].append(query)
+                else:
+                    if v:
+                        print "\tCouldn't find a valid assignment for '%s'" %query
+                    tax_count['nohit']['nohit'].append(query)
+
+    #cleanup - remove any taxonomic levels that did not get assignments from the dictionary
+    for key in tax_count.keys():
+        if not tax_count[key]:
+            del(tax_count[key])
+
+    return tax_count
+
+
 def find_full_taxonomy(per_tax_level, taxonomy_dictionary):
-	
-	syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
+        
+        """
+        Extracts taxonomy strings consisting of definend taxonomic levels for taxids
+        """
+        
+        syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
         levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
-	level_indices = []
-	tax_trees = {}
+        level_indices = []
+        tax_trees = {}
 
-#	print "taxonomy dict headers: %s" %taxonomy_dictionary['tax_id']
-#	print "taxonomy dict headers: %s" %len(taxonomy_dictionary['tax_id'])
-	for level in levels:
-		tax_trees[level] = {}
-		for i in range(len(taxonomy_dictionary['tax_id'])):
-			if level == taxonomy_dictionary['tax_id'][i]:
-				level_indices.append(i)
+        for level in levels:
+            tax_trees[level] = {}
+            for i in range(len(taxonomy_dictionary['tax_id'])):
+                if level == taxonomy_dictionary['tax_id'][i]:
+                    level_indices.append(i)
 
-	for level in reversed(levels):
-		if level in per_tax_level:
-#			print "Taxonomic level: %s" %level
-			
-			for tid in per_tax_level[level]:
-#				print "\ttaxid: %s" %tid
-				ind_taxonomy = []
-#				print taxonomy_dictionary[tid]
-#				print len(taxonomy_dictionary[tid])
-				for i in range(len(level_indices)):#range(len(levels)):
-#					print "seeking level %s at index: %s" %(taxonomy_dictionary['tax_id'][level_indices[i]], level_indices[i])
-					if taxonomy_dictionary[tid][level_indices[i]]:
-                                        	ind_taxonomy.append('%s%s' %(syn[levels[i]],taxonomy_dictionary[taxonomy_dictionary[tid][level_indices[i]]][2].replace(' ','_')))
-                                	else:
-                                        	ind_taxonomy.append('%sunknown' %syn[levels[i]])
+        for level in reversed(levels):
+            if level in per_tax_level:
+                
+                for tid in per_tax_level[level]:
+#                    print "\n\ttaxid: %s" %tid
+                    ind_taxonomy = []
+                    for i in range(len(level_indices)):#range(len(levels)):
+#                        print "seeking level %s at index: %s" %(taxonomy_dictionary['tax_id'][level_indices[i]], level_indices[i])
+                        if taxonomy_dictionary[tid][level_indices[i]]:
+                            ind_taxonomy.append('%s%s' %(syn[levels[i]],taxonomy_dictionary[taxonomy_dictionary[tid][level_indices[i]]][2].replace(' ','_')))
+                        else:
+                            ind_taxonomy.append('%sunknown' %syn[levels[i]])
 
-				for j in reversed(range(len(levels))):
-		                        if '_unknown' in ind_taxonomy[j]:
-                                		del ind_taxonomy[j]
-					else:
-						break
+                    for j in reversed(range(len(levels))):
+                        if '_unknown' in ind_taxonomy[j]:
+                            del ind_taxonomy[j]
+                        else:
+                            break
 
-				tax_trees[level][tid] = ind_taxonomy
-#				print "\ttaxonomy: %s" %tax_trees[level][tid]
-#				for otu in per_tax_level[level][tid]:
-#					print "\t\totu: %s" %otu
-#		else:
-#			print "Taxonomic level '%s' was not observed" %level
+                    tax_trees[level][tid] = ind_taxonomy
 
-	if per_tax_level['nohit']:
-#		print "Taxonomic level: 'nohit'"
-		tax_trees['nohit'] = {'unassigned': ['__unassigned']}
-#		print "\ttaxonomy: %s" %tax_trees['nohit']['unassigned']
-#		for otu in per_tax_level['nohit']['nohit']:
-#                	print "\t\totu: %s" %otu
+        if per_tax_level['nohit']:
+            tax_trees['nohit'] = {'unassigned': ['__unassigned']}
 
-	for rank in tax_trees.keys():
-		if not tax_trees[rank]:
-			del tax_trees[rank]
-	
-#	print tax_trees
-	return tax_trees
+        for rank in tax_trees.keys():
+            if not tax_trees[rank]:
+                del tax_trees[rank]
+
+        return tax_trees
+
 
 def global_uc_to_biom(clust_dict, query_dict):
 	
@@ -766,6 +844,9 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
     "The function takes a list of taxonomic ids, runs the taxtable program from the taxit suite"
     "to summarize the taxonomic information for the taxids and formats the result into a dictionary"
 
+    import shlex, subprocess
+    import re
+
     write_taxids(tids)
 
     cmd = "taxit taxtable -d %s -t taxids.txt -o taxa.csv" %taxonomy_db
@@ -1111,11 +1192,20 @@ def initiate_custom_kraken_db(db_path='./', db_name='custom', v=0):
     
     print cmd
     cmdlist = shlex.split(cmd)
-    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-#    if v and stdout:
-#        print stdout
-    if stderr:
+    proc = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate()
+    exitcode = proc.returncode #exitcode is '0' if process finished without error
+
+#    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+#    exitcode = 
+    if v:
+	if stdout:
+            print stdout
+#	if stderr:
+#	    print stderr
+    if exitcode:
         print stderr
+	sys.exit('\nkraken-build failed - see error message above\n')
 
 def add_fasta_to_kraken_db(db_in_fasta, db_path='./', db_name='custom', v=0):
     """
@@ -1129,13 +1219,22 @@ def add_fasta_to_kraken_db(db_in_fasta, db_path='./', db_name='custom', v=0):
     
     print cmd
     cmdlist = shlex.split(cmd)
-    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-    if v and stdout:
-        print stdout
-    if stderr:
+    proc = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate()
+    exitcode = proc.returncode
+#    print "EXITCODE: %s" %exitcode
+
+#    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+    if v:
+	if stdout:
+            print stdout
+	if stderr:
+	    print stderr
+    if exitcode:
         print stderr
+	sys.exit('\nkraken-build failed - see error message above\n')
         
-def build_custom_kraken_db(db_path='./', db_name='custom', threads=1, v=0):
+def build_custom_kraken_db(db_path='./', db_name='custom', threads=1, jellyfish_hash_size=False, v=0):
     """
     adds a fasta file (formatted according to kraken guidelines) to kraken db
     """
@@ -1143,23 +1242,34 @@ def build_custom_kraken_db(db_path='./', db_name='custom', threads=1, v=0):
     import shlex, subprocess
     
     print "## Build kraken database ##\n"
-    cmd="kraken-build --build --threads %s --db %s/%s\n" %(threads, db_path, db_name)
+    cmd="kraken-build --build --threads %s --db %s/%s" %(threads, db_path, db_name)
+    if jellyfish_hash_size:
+	cmd+=' --jellyfish-hash-size %s' %jellyfish_hash_size
     
     print cmd
     cmdlist = shlex.split(cmd)
-    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-    if v and stdout:
-        print stdout
-    if stderr:
+    proc = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate()
+    exitcode = proc.returncode
+#    print "EXITCODE: %s" %exitcode
+
+#    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+    if v:
+	if stdout:
+            print stdout
+	if stderr:
+	    print stderr
+    if exitcode:
         print stderr
+	sys.exit('\nkraken-build failed - see error message above\n')
     
-def full_build_custom_kraken_db(db_in_fasta, db_path='.', db_name='KRAKEN_DB', threads=1, v=args.verbose):
+def full_build_custom_kraken_db(db_in_fasta, db_path='.', db_name='KRAKEN_DB', threads=1, v=args.verbose, jellyfish_hash_size=False):
     
     print "\n### BUILD CUSTOM KRAKEN DATABASE ###\n"
     
     initiate_custom_kraken_db(db_path, db_name, v)
     add_fasta_to_kraken_db(db_in_fasta, db_path, db_name, v)
-    build_custom_kraken_db(db_path, db_name, threads, v)
+    build_custom_kraken_db(db_path, db_name, threads, jellyfish_hash_size, v)
     
 def run_kraken(kraken_db, queries_fasta, threads=args.n_threads):
     """
@@ -1167,29 +1277,72 @@ def run_kraken(kraken_db, queries_fasta, threads=args.n_threads):
     """
     
     import shlex, subprocess
-    
+    import os.path
+
     print "## Running Kraken ##\n"
     cmd="kraken --threads %s --db %s %s\n" %(str(threads), kraken_db, queries_fasta)
     
     print cmd
     cmdlist = shlex.split(cmd)
-    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
-    
-    out = open('kraken.out','w')
-    out.write(stdout)
-    out.close()
+    proc = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate()
+    exitcode = proc.returncode
+
+#    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+    if exitcode:
+        print stderr
+	sys.exit('\nkraken failed - see error message above\n')
     
     if stderr:
         print stderr
 
-def parse_kraken_out(kraken_tab='kraken.out'):
+    out = open('kraken.out','w')
+    out.write(stdout)
+    out.close()
+    print "Written results to %s\n" %os.path.abspath('kraken.out')
+    
+    return os.path.abspath('kraken.out')
+
+def kraken_filter(kraken_db, kraken_out, score_threshold=0):
+    """
+    Run kraken-filter. Infer confidence score for kraken results and or filter by score.
+    """
+
+    import shlex, subprocess
+    import os.path
+
+    print "## Inferring kraken confidence scores / filter by score ##\n"
+    cmd="kraken-filter --db %s --threshold %s %s\n" %(kraken_db, score_threshold, kraken_out)
+
+    print cmd
+    cmdlist = shlex.split(cmd)
+    proc = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate()
+    exitcode = proc.returncode
+
+#    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+    if exitcode:
+        print stderr
+        sys.exit('\nkraken failed - see error message above\n')
+
+    if stderr:
+        print stderr
+
+    out = open('kraken.filtered.score-'+str(score_threshold)+'.out','w')
+    out.write(stdout)
+    out.close()
+    print "Written results to %s\n" %os.path.abspath('kraken.filtered.score-'+str(score_threshold)+'.out')
+
+    return os.path.abspath('kraken.filtered.score-'+str(score_threshold)+'.out')
+
+def parse_kraken_out(kraken_out):
     """
     The function parses the raw kraken output table into a dictionary
     """
     
     result_dict = {'hit':{}, 'nohit':[], 'format':'taxid'}
     
-    in_table = open(kraken_tab,'r')
+    in_table = open(kraken_out,'r')
     for l in in_table:
 #        print l.strip()
         if l.startswith('U'):
@@ -1217,71 +1370,6 @@ def extract_taxid_list_from_result(dictionary):
 	out_list.extend(val)
 
     return out_list
-def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
-    """
-    finds taxonomic level of assignemt based on taxid and bins into dictionary
-    """
-    from collections import defaultdict
-    
-    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
-    tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
-    minimum = tax_dict["tax_id"].index("kingdom")
-    
-    if not tax_count.has_key('nohit'):
-        tax_count['nohit'] = {'nohit':[]}
-
-    if kraken_out.has_key('nohit'):
-	tax_count['nohit']['nohit'].extend(kraken_out['nohit'])
-
-    if kraken_out.has_key('hit'):
-        
-        for query in kraken_out['hit']:
-
-            #find the index of the initial assignment
-	    index = tax_dict["tax_id"].index(tax_dict[kraken_out['hit'][query][0]][1])
-
-	    #if already the initial assignemnt is above kingdom level
-	    if index < minimum:
-		if v:
-		    print "initial assignment above level kingdom for %s -> bin as 'nohit'" %query
-		tax_count['nohit']['nohit'].append(query)
-		continue
-
-	    #if the initial assignment hits one of the focal taxonomic levels
-            if tax_dict[kraken_out['hit'][query][0]][1] in levels:
-                if v:
-                    print "direct assignment for %s -> %s" %(query, kraken_out['hit'][query][0])
-                if not tax_count[tax_dict[kraken_out['hit'][query][0]][1]].has_key(kraken_out['hit'][query][0]):
-                    tax_count[tax_dict[kraken_out['hit'][query][0]][1]][kraken_out['hit'][query][0]] = []
-                tax_count[tax_dict[kraken_out['hit'][query][0]][1]][kraken_out['hit'][query][0]].append(query)
-
-	    #if the initial assignment does not hit one of the focal taxonomic levels
-            else:
-		if v:
-	                print "invalid assignment for %s\t%s - %s - %s" %(query, kraken_out['hit'][query][0],tax_dict[kraken_out['hit'][query][0]][1], tax_dict[kraken_out['hit'][query][0]][2])
-                ok = 0
-                
-		#we'll count down, i.e. move taxonomic levels up one by one until we hit a level that is acceptable
-		while index >= minimum and not ok:
-                    index-=1
-
-                    if tax_dict["tax_id"][index] in levels:
-                        ok = 1
-
-                taxid = tax_dict[kraken_out['hit'][query][0]][index]
-
-                if v:
-                    print "adjusted assignment for %s -> %s" %(query, taxid)
-                if not tax_count[tax_dict["tax_id"][index]].has_key(taxid):
-                    tax_count[tax_dict["tax_id"][index]][taxid] = []
-                tax_count[tax_dict["tax_id"][index]][taxid].append(query)
-                
-    #cleanup - remove any taxonomic levels that did not get any assignments from the dictionary
-    for key in tax_count.keys():
-        if not tax_count[key]:
-            del(tax_count[key])
-    
-    return tax_count
 
 def extract_queries_plus_rc(infile, good_list, bad_list, rc_list, out_prefix='pplacer'):
 	"""
@@ -1390,7 +1478,9 @@ def assign_taxonomy_pplacer(pplacer_out, tax_dict, v=0):
     levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
     tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
     minimum = tax_dict["tax_id"].index("kingdom")
-    
+  
+    print "\nInterpreting pplacer results and adjust to standard taxonomic levels (%s)\n" %", ".join(levels)
+ 
     if pplacer_out.has_key('nohit'):
         if not tax_count.has_key('nohit'):
             tax_count['nohit'] = {'nohit':[]}
@@ -1400,35 +1490,58 @@ def assign_taxonomy_pplacer(pplacer_out, tax_dict, v=0):
         
         for query in pplacer_out['hit']:
 
-            if tax_dict[pplacer_out['hit'][query][0]][1] in levels:
+            #find the index of the initial assignment
+            index = tax_dict["tax_id"].index(tax_dict[pplacer_out['hit'][query][0]][1])
+
+            #if already the initial assignemnt is above kingdom level
+            if index < minimum:
                 if v:
-                    print "\ndirect assignment for %s -> %s" %(query, pplacer_out['hit'][query][0])
+                    print "initial assignment above level kingdom for %s -> bin as 'nohit'" %query
+                tax_count['nohit']['nohit'].append(query)
+                continue
+
+            #if the initial assignment hits one of the focal taxonomic level
+            if tax_dict[pplacer_out['hit'][query][0]][1] in levels and tax_dict[pplacer_out['hit'][query][0]][2]:
+                if v:
+                    print "\ndirect assignment for %s -> %s" %(query, pplacer_out['hit'][query][0], tax_dict[pplacer_out['hit'][query][0]][2])
                 if not tax_count[tax_dict[pplacer_out['hit'][query][0]][1]].has_key(pplacer_out['hit'][query][0]):
                     tax_count[tax_dict[pplacer_out['hit'][query][0]][1]][pplacer_out['hit'][query][0]] = []
                 tax_count[tax_dict[pplacer_out['hit'][query][0]][1]][pplacer_out['hit'][query][0]].append(query)
 
+            #if the initial assignment does not hit one of the focal taxonomic levels
             else:
-		if v:
-                	print "invalid assignment level\n\t%s - %s - %s" %(pplacer_out['hit'][query][0],tax_dict[pplacer_out['hit'][query][0]][1], tax_dict[pplacer_out['hit'][query][0]][2])
+                if v:
+                        print "invalid assignment level for %s\t%s - %s - '%s'" %(query, tax_dict[pplacer_out['hit'][query][0]][1], pplacer_out['hit'][query][0], tax_dict[pplacer_out['hit'][query][0]][2])
+                        print "\tsearching through higher taxonomic levels:"
                 ok = 0
-                #find the index to count down from
-                index = tax_dict["tax_id"].index(tax_dict[pplacer_out['hit'][query][0]][1])
-#                print index,tax_dict["tax_id"][index]
+                
+                #we'll count down, i.e. move taxonomic levels up one by one until we hit a level that is acceptable
                 while index >= minimum and not ok:
                     index-=1
+                    if tax_dict["tax_id"][index] in levels: #check if the current taxonomic level is a valid one
 
-                    if tax_dict["tax_id"][index] in levels:
-                        ok = 1
+                        if tax_dict[pplacer_out['hit'][query][0]][index]: #check if there is actually a taxid availble for the lineage at this level
+                            if v:
+                                print "\tlevel '%s' is among the targets - taxid present -> OK!" %tax_dict["tax_id"][index]
+                            ok = 1
+                        else: #
+                            if v:
+                                print "\tlevel '%s' is among the targets, but no taxid available at this level -> moving on" %tax_dict["tax_id"][index]
 
-                taxid = tax_dict[pplacer_out['hit'][query][0]][index]
+                if ok:
+                    taxid = tax_dict[pplacer_out['hit'][query][0]][index]
 
-                if v:
-                    print "adjusted assignment for %s -> %s" %(query, taxid)
-                if not tax_count[tax_dict["tax_id"][index]].has_key(taxid):
-                    tax_count[tax_dict["tax_id"][index]][taxid] = []
-                tax_count[tax_dict["tax_id"][index]][taxid].append(query)
-                
+                    if v:
+                        print "\tadjusted assignment for %s -> %s (%s)" %(query, taxid, tax_dict[taxid][2])
+                    if not tax_count[tax_dict["tax_id"][index]].has_key(taxid):
+                        tax_count[tax_dict["tax_id"][index]][taxid] = []
+                    tax_count[tax_dict["tax_id"][index]][taxid].append(query)
+                else:
+                    if v:
+                        print "\tCouldn't find a valid assignment for '%s'" %query
+                    tax_count['nohit']['nohit'].append(query)
 
+    ## cleanup - remove any taxonomic levels that were not hit
     for key in tax_count.keys():
         if not tax_count[key]:
             del(tax_count[key])
@@ -2517,14 +2630,16 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 				# Format Sequences for input to kraken database build
 				gb_to_kraken_db(all_seqs, args.marker)
 				#Build database
-				full_build_custom_kraken_db(args.marker+'.kraken.fasta', db_path='.', db_name='KRAKEN_DB', threads=args.n_threads, v=args.verbose)
+				full_build_custom_kraken_db(args.marker+'.kraken.fasta', db_path='.', db_name='KRAKEN_DB', threads=args.n_threads, jellyfish_hash_size=args.jellyfish_hash_size, v=args.verbose)
 				args.kraken_db = os.path.abspath('./KRAKEN_DB')
 				print "\nSuccessuflly generated at: %s\n" %args.kraken_db
 			else:
 				print "\nUsing precompiled kraken database: %s\n" %args.kraken_db
 
-			run_kraken(kraken_db=args.kraken_db, queries_fasta=global_centroids, threads=args.n_threads)
-			kraken_out_dict = parse_kraken_out(kraken_tab='kraken.out')
+			kraken_out_file = run_kraken(kraken_db=args.kraken_db, queries_fasta=global_centroids, threads=args.n_threads)
+			kraken_out_file = kraken_filter(kraken_db=args.kraken_db, kraken_out=kraken_out_file, score_threshold=args.kraken_score_threshold)
+
+			kraken_out_dict = parse_kraken_out(kraken_out=kraken_out_file)
 			
 			print "\nestablishing taxonomy for reference sequences from custom database\n"
 #	                if reference_taxa.values():
