@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.97.7-global"
+VERSION="0.97.8-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -63,7 +63,7 @@ read_metrics = ['total', 'trimmed-total', 'trimmed-pe', 'trimmed-orphans', 'merg
 primer_versions = []
 bl_db_extensions = ["nin", "nsq", "nhr"]
 blast_dict = defaultdict(dict) #this will hold the results from parsing the BLAST output
-gi_to_taxid_dict = {}
+gb_to_taxid_dict = {}
 taxid_list = []
 tax_dict = {}
 BIOM_tables_per_method = {}
@@ -110,7 +110,7 @@ reference_group = parser.add_argument_group('Reference', 'The parameters in this
 reference_group.add_argument("-R", "--REFlist", help="file containing a list of files to be used as reference sequences", metavar="<FILE>", action="store")
 reference_group.add_argument("--gb_out", help="output the corrected gb file", metavar="<FILE>", action="store", default="")
 reference_group.add_argument("--rec_check", help="check records to be used as reference", action="store_true")
-reference_group.add_argument("--gi_to_taxid", help="comma delimited file containing 'gi accession,taxid' for a list of taxa", metavar="<FILE>", action="store", default=os.getcwd()+"/gi_to_taxid.csv")
+reference_group.add_argument("--gb_to_taxid", help="comma delimited file containing 'gb accession,taxid' for a list of taxa", metavar="<FILE>", action="store", default=os.getcwd()+"/gb_to_taxid.csv")
 cluster_group = parser.add_argument_group('Query clustering options', 'The parameters in this group affect read clustering')
 cluster_group.add_argument("--cluster", help="perform clustering of query sequences using vsearch", action="store_true")
 cluster_group.add_argument("--clust_match", help="identity threshold for clustering in percent (default: 1)", type=float, metavar="<FLOAT>", action="store", default="1")
@@ -625,8 +625,7 @@ def check_email(mail):
         return mail
 
 	
-
-def rw_gi_to_taxid_dict(dictionary, name, mode):
+def rw_gb_to_taxid_dict(dictionary, name, mode):
     '''
     The function writes a dictionary to a file ('key,value')
     or reads a comma separated file into a dictionary
@@ -649,9 +648,8 @@ def rw_gi_to_taxid_dict(dictionary, name, mode):
 	print " ..done parsing!\n"
         
     else:
-        sys.exit("only 'r' or 'w' are allowed for mode in the rw_gi_to_taxid_dict")
+        sys.exit("only 'r' or 'w' are allowed for mode in the rw_gb_to_taxid_dict")
         
-
 
 def filter_centroid_fasta(centroid_fasta, m_cluster_size, cluster_counts, sampleID, v=False):
     "This function filters the centroid fasta file produced by vsearch"
@@ -902,26 +900,30 @@ def check_for_taxonomy_db(tax_db):
 
     return tax_db
 
-def gi_to_taxid(b_filtered, all_taxids, processed, v=0):
+def gb_to_taxid(b_filtered, all_taxids, processed, gb_to_taxid_file=args.gb_to_taxid, v=0):
     "This function takes the resulting dictionary from the blast_filter function"
-    "and fetches the corresponding taxonomic ids to the gi accessions if necessary"
-    "(i.e. if the format is specified as 'gi')."
+    "and fetches the corresponding taxonomic ids to the gb accessions if necessary"
+    "(i.e. if the format is specified as 'gb')."
     "It returns a list of unique taxonomic ids."
-    done = 0
-    if b_filtered['format'] == 'gi':
+    if b_filtered['format'] == 'gb':
+	total = 0
         for query in b_filtered['hit'].keys():
+	    new = 0
+	    old = 0
+            taxids=[]
             if v:
                 print "processing query: %s" %query
-            taxids=[]
             for hit in b_filtered['hit'][query]:
 #                print "gi: %s" %hit
                 if processed.has_key(hit):
                     taxid = processed[hit]
-                    done += 1
+                    old += 1
                     if v:
-                        print "have seen gi %s (%i) before" %(hit, done)
+                        print "have seen gb accession '%s' before" %(hit)
                 else:
                     
+                    if v:
+                        print "querying Genbank to fetch taxid for gb accession '%s'" %(hit),
 		    done = False
 	            while not done:
 			try:
@@ -934,24 +936,30 @@ def gi_to_taxid(b_filtered, all_taxids, processed, v=0):
                     taxid = taxon[0]['TSeq_taxid']
                     processed[hit] = taxon[0]['TSeq_taxid']
                     time.sleep(0.25)
-                    done += 1
-                    if v:
-                        print "fetched taxid for gi: %s (%i) using Entrez" %(hit, done)
+                    new += 1
+		    if v:
+			print " .. success!"
                         
 #                print "taxid: %s" %taxid                
                 taxids.append(taxid)
+		total += 1
                 if not v:
-                    if done%100 == 0:
-                        print ".", #the comma at the end ommits the newline when printing
+                    if total%100 == 0:
+                        print "accessions processed:\t%i" %total
                 
 #            print b_filtered['hit'][query]
             b_filtered['hit'][query] = list(set(taxids))
 #            print len(taxids)
             all_taxids.extend(taxids)
 #            print len(all_taxids)
-            
+
+	    if new > 0:
+		if v:
+		    print "detected %i new accessions -> updating local gb_to_taxid record" %new
+		rw_gb_to_taxid_dict(dictionary=processed, name=gb_to_taxid_file, mode='w')
+    
         if v:
-            print "\nfetched taxids for %i gis" %done
+            print "\nDone! - gathered taxids for %i accessions" %total
         
     elif b_filtered['format'] == 'taxid':
         for query in b_filtered['hit'].keys():
@@ -961,6 +969,7 @@ def gi_to_taxid(b_filtered, all_taxids, processed, v=0):
 #    print "make to set"
     all_taxids = list(set(all_taxids))
     return all_taxids
+
 
 def pre_pplacer_filter(blast_handle, m_ident=0.8, m_ali_length=0.95, v=0):
 	"""
@@ -1076,15 +1085,16 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, b
             for alignment in res.alignments: #for each hit of the current query
 #                print alignment.hsps[0].bits
                 if not result['format']: #determining the format of the blast database (only once per blast file)
-                    if alignment.title.startswith('gi'):
-                        result['format']='gi'
+                    if alignment.title.startswith('gi') or alignment.title.startswith('gb'):
+                        result['format']='gb'
+			gb_index = alignment.title.split("|").index("gb")+1
                     else:
                         result['format']='taxid'
 
                 if alignment.hsps[0].bits >= (max_bit_score*bit_score_cutoff_set): #if a hit has a bitscore that falls within the specified window it will be collected for later LCA
 #                    print alignment.title.split("|")[1]
-                    if result['format'] == 'gi':
-                        result['hit'][res.query].append(alignment.title.split("|")[1])
+                    if result['format'] == 'gb':
+                        result['hit'][res.query].append(alignment.title.split("|")[gb_index])
                     elif result['format'] == 'taxid':
                         result['hit'][res.query].append(alignment.title.split("|")[-2])
 
@@ -1800,11 +1810,10 @@ if args.BIOM_input:
 	args.BIOM_input = os.path.abspath(args.BIOM_input)
 	BIOM_tables_per_method['OTU_denovo'] = parse_BIOM_denovo(table=args.BIOM_input)
 
-#check if gi_to_taxid dictonary is there and read if yes
-#print "looking for gi_to_taxid file at %s" %args.gi_to_taxid
-if os.path.isfile(args.gi_to_taxid):
-	print "\nfound gi_to_taxid file at %s" %args.gi_to_taxid,
-	rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='r')
+#check if gb_to_taxid file is there and read if yes
+if os.path.isfile(args.gb_to_taxid):
+	print "\nfound gb_to_taxid file at %s" %args.gb_to_taxid,
+	rw_gb_to_taxid_dict(dictionary=gb_to_taxid_dict, name=args.gb_to_taxid, mode='r')
 	
 
 #print references
@@ -2537,20 +2546,10 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 			res_dict = {}
 			res_dict = blast_filter(b_result=blast_results, v=args.verbose, m_ident=args.min_ident, m_bitscore=args.min_bit, m_ali_length=args.min_ali_length, bit_score_cutoff=args.bitscore_skim_LCA, bit_score_cutoff_adjust_off=args.bitscore_skim_adjust_off, strand_reversed=queries_to_rc)
 
-			if res_dict['format'] == 'gi':	#This is the case if BLAST was performed against Genbank
+			if res_dict['format'] == 'gb':	#This is the case if BLAST was performed against Genbank
 				print '\n'+time.strftime("%c")+'\n'
-				print "\nfetch taxids for gis\n"
-#				print "current length of taxid list: %i" %len(taxid_list)
-				taxid_list = gi_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gi_to_taxid_dict, v=args.verbose)
-#				print "current length of taxid list: %i" %len(taxid_list)
-
-				if len(gi_to_taxid_dict) > 0:
-					print "\nwriting 'gi_to_taxid' dictionary to file %s" %args.gi_to_taxid,
-					rw_gi_to_taxid_dict(dictionary=gi_to_taxid_dict, name=args.gi_to_taxid, mode='w')
-
-#				print "\ngenerate taxonomy dictionary\n"
-#				#tax_dict = {}
-#				make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+				print "\nfetch taxids for gb accessions\n"
+				taxid_list = gb_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gb_to_taxid_dict, v=args.verbose)
 
 			elif res_dict['format'] == 'unknown': #blast_filter function did not assign a format because no good hit was found to actually assess the format
 				if not tax_dict.has_key('tax_id'): #in this rare case I check if the tax_dict is in the proper format and if not
