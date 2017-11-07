@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.97.8-global"
+VERSION="0.97.9-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -94,6 +94,7 @@ parser.add_argument("-e", "--extract_all_reads", help="extract reads to files", 
 parser.add_argument("--read_stats_off", help="ommit writing read stats to file", action="store_true")
 query_group = parser.add_argument_group('Query preprocessing', 'The parameters in this group affect how the query sequences are processed')
 query_group.add_argument("--PCR_primer", help='PCR primers (provided in fasta file) to be clipped from reads', metavar="<FILE>", action="store")
+query_group.add_argument("--bc_dist", help="Number of mismatches allowed in barcode sequences", metavar="<INT>", type=int, action="store")
 query_group.add_argument("--trim_adapter", help="trim adapters provided in file", metavar="<FILE>", action="store")
 query_group.add_argument("--trim_qual", help="minimum phred quality score (default: 30)", metavar="<INT>", type=int, action="store", default=30)
 query_group.add_argument("--phred", help="phred quality score offset - 33 or 64 (default: 33)", metavar="<INT>", type=int, action="store", default=33)
@@ -1994,6 +1995,7 @@ if files_to_barcodes:
 		os.makedirs('demultiplexed')
 		
 	os.chdir('demultiplexed')
+	to_append=''
 	for lib in files_to_barcodes.keys():
 		data = lib.split("|")
 		compr_mode = ""
@@ -2014,6 +2016,10 @@ if files_to_barcodes:
 			compr_mode = "fastq"
 #			print "set mode to %s" %compr_mode
 #		print "create temporal barcode file"
+		if args.bc_dist:
+			to_append=' -r --barcode_dist %s' %args.bc_dist
+
+
 		BC = open("barcodes","w")
 		for sample in files_to_barcodes[lib].keys():
 #			print "This is sample: %s" %sample
@@ -2028,6 +2034,10 @@ if files_to_barcodes:
 		if len(data)>1:
 			print "data comes as paired end - ok"
 			demultiplex_cmd="process_shortreads -1 %s -2 %s -i %s -o . -b barcodes %s -y fastq" %(data[0], data[1], compr_mode, barcode_mode)
+			
+			if to_append:
+				demultiplex_cmd+=to_append
+
 			print demultiplex_cmd
 			cmdlist = shlex.split(demultiplex_cmd)
 			cmd = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE) 
