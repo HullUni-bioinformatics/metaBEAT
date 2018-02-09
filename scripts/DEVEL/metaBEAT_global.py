@@ -36,7 +36,7 @@ import shutil
 taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
 	
 #############################################################################
-VERSION="0.97.9-global"
+VERSION="0.97.10-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -850,8 +850,8 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
 
     write_taxids(tids)
 
-    cmd = "taxit taxtable -d %s -t taxids.txt -o taxa.csv" %taxonomy_db
-    print "running taxit to generate reduced taxonomy table"
+    cmd = "taxit taxtable -f taxids.txt -o taxa.csv %s" %taxonomy_db
+    print "running taxit (v0.8.5) to generate reduced taxonomy table"
     if len(denovo_taxa) > 0:
         print "WARNING: any taxa without valid taxid will not be included -  NEEDS TO BE FIXED IF PHYLOGENETIC PLACEMENT IS PLANNED"
     print "\n"+cmd
