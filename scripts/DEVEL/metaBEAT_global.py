@@ -32,9 +32,6 @@ import shlex, subprocess
 import shutil
 
 
-##############set this, or put a file called taxonomy.db in the same directory as the metaBEAT.py script############
-taxonomy_db = '/home/chrishah/src/taxtastic/taxonomy_db/taxonomy.db'
-	
 #############################################################################
 VERSION="0.97.10-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
@@ -119,6 +116,8 @@ cluster_group.add_argument("--clust_cov", help="minimum number of records in clu
 blast_group = parser.add_argument_group('BLAST search', 'The parameters in this group affect BLAST search and BLAST based taxonomic assignment')
 blast_group.add_argument("--blast_db", help="path to precompiled blast database", metavar="<PATH>", action="store", default="")
 blast_group.add_argument("--blast_xml", help="path to Blast result in xml format", metavar="<PATH>", action="store", default="")
+blast_group.add_argument("--update_taxonomy", help="Download/update taxonomy database. Database will be called 'taxonomy.db' and will be compiled in the same location as the metaBEAT.py script.", action="store_true", default=False)
+blast_group.add_argument("--taxonomy_db", help="taxonomy database file location. In case it's not the default, which is 'taxonomy.db' in the same directory as the metaBEAT.py script.", metavar="<FILE>", action="store")
 #blast_group.add_argument("--www", help="perform online BLAST search against nt database", action="store_true")
 blast_group.add_argument("--min_ident", help="minimum identity threshold in percent (default: 0.80)", type=float, metavar="<FLOAT>", action="store", default="0.80")
 blast_group.add_argument("--min_ali_length", help="minimum alignment length in percent of total query length (default: 0.95)", type=float, metavar="<FLOAT>", action="store", default="0.95")
@@ -885,7 +884,38 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
 #	while out_tax_dict['tax_id'][-1] != 'species': #this should get rid of any 'subspecies' or 'varietas' levels
 #            out_tax_dict['tax_id'].pop(-1)
 
+def update_taxonomy(v):
 
+    import shlex, subprocess
+
+    filename = os.path.dirname(sys.argv[0])+'/taxonomy.db'
+    print "\nUpdate/compile taxonomy database at %s - might take a minute or two\n" %filename
+
+    if os.path.isfile(filename):
+	os.remove(filename)
+    
+    cmd="taxit new_database --download-dir %s/ %s" %(os.path.dirname(filename), filename)
+    print cmd
+    cmdlist = shlex.split(cmd)
+    proc = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate()
+    exitcode = proc.returncode
+#    print "EXITCODE: %s" %exitcode
+
+#    stdout, stderr = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate() # , stdout=subprocess.PIPE).communicate()
+    if v:
+        if stdout:
+            print stdout
+        if stderr:
+            print stderr
+    if exitcode:
+        print stderr
+        sys.exit('\nDownloading/compiling the taxonomy database failed - see error message above\n')
+
+    path = os.path.dirname(filename)
+    os.remove(os.path.dirname(filename)+'/taxdmp.zip')
+    print "Done!\n"
+    sys.exit()
 
 def check_for_taxonomy_db(tax_db):
     "The function checks if the taxonomy.db is present"
@@ -893,8 +923,15 @@ def check_for_taxonomy_db(tax_db):
                 if os.path.isfile(os.path.dirname(sys.argv[0])+'/taxonomy.db'): #check if taxonomy.db is present in the same path as the metabeat.py script
                         tax_db = "%s/taxonomy.db" %os.path.dirname(sys.argv[0])
 			print "taxonomy.db found at %s" %tax_db
+			
+                	now = datetime.today()
+                	modify_date = datetime.fromtimestamp(os.path.getmtime(os.path.dirname(sys.argv[0])))
+                	if (now-modify_date).days > 30:
+                        	print "Your taxonomy database is older than 30 days - might not be a problem, but you can update it via 'metaBEAT_global.py --update_taxonomy' - good luck!\n"
+			else:
+				print "Taxonomy database is %s days old - good!" %(now-modify_date).days
                 else:
-                        print "\nmetaBEAT.py requires a taxonomy database. Please configure it using taxtastic. Per default metaBEAT expects a file 'taxonomy.db' in the same directory that contains the metaBEAT.py script. If you are not happy with that please change the variable 'taxonomy_db' at the top of this script to the correct path to your taxonomy.db file.\n"
+                        print "\nIf you are attempting taxonomic assignmnt, metaBEAT.py requires a taxonomy database configured by taxtastic. Per default metaBEAT expects a file 'taxonomy.db' in the same directory that contains the metaBEAT.py script. If you have the database in a different location you can specify this via the '--taxonomy_db' option. If you don't have the database you can run 'metaBEAT_global.py --update_taxonomy', which will download and compile the database for you.\n"
                         sys.exit()
     else:
         print "taxonomy.db is present at: %s" %tax_db
@@ -1592,6 +1629,9 @@ print "\n%s\n" %DESCRIPTION
 print '\n'+time.strftime("%c")+'\n'
 print "%s\n" % (' '.join(sys.argv))
 
+if args.update_taxonomy:
+	update_taxonomy(v=args.verbose)
+
 if args.email:
 	Entrez.email = args.email
 Entrez.email = check_email(mail = Entrez.email)#mail=Entrez.email)	
@@ -1605,7 +1645,8 @@ if args.kraken_db:
 	args.kraken_db = os.path.abspath(args.kraken_db)
 
 #if args.blast or args.blast_xml or args.pplace:
-taxonomy_db = check_for_taxonomy_db(tax_db=taxonomy_db)
+if args.blast or args.kraken or args.pplace:
+	taxonomy_db = check_for_taxonomy_db(tax_db=args.taxonomy_db)
 
 
 if args.pplace:
