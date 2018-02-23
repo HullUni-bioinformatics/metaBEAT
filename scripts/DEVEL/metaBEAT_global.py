@@ -172,7 +172,7 @@ def add_taxonomy_to_biom(per_tax_level_clusters, per_tax_level_trees, biom_in, m
     	from biom.table import Table
 	
 	dictionary = {}
-	levels = ['nohit', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+	levels = ['nohit', 'superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
 	biom_out = biom_in.copy()
 	otu_order = []
 	trees = []
@@ -322,9 +322,9 @@ def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
     """
     from collections import defaultdict
 
-    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
-    tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
-    minimum = tax_dict["tax_id"].index("kingdom")
+    levels = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
+    tax_count = {'superkingdom':{}, 'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
+    minimum = tax_dict["tax_id"].index("superkingdom")
 
     print "\nInterpreting kraken results and adjust to standard taxonomic levels (%s)\n" %(", ".join(levels))
 
@@ -341,10 +341,10 @@ def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
             #find the index of the initial assignment
             index = tax_dict["tax_id"].index(tax_dict[kraken_out['hit'][query][0]][1])
 
-            #if already the initial assignemnt is above kingdom level
+            #if already the initial assignemnt is above superkingdom level
             if index < minimum:
                 if v:
-                    print "initial assignment above level kingdom for %s -> bin as 'nohit'" %query
+                    print "initial assignment above level superkingdom for %s -> bin as 'nohit'" %query
                 tax_count['nohit']['nohit'].append(query)
                 continue
 
@@ -407,8 +407,8 @@ def find_full_taxonomy(per_tax_level, taxonomy_dictionary):
         Extracts taxonomy strings consisting of definend taxonomic levels for taxids
         """
         
-        syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
-        levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+        syn = {'superkingdom': 'sk__', 'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
+        levels = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
         level_indices = []
         tax_trees = {}
 
@@ -739,12 +739,13 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     "The function takes a dictionary of queries and their hits"
     "and provides taxonomic assignment based on the LCA method."
     tax_count = defaultdict(dict)
-    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
+    levels = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
 
 #    print len(b_filtered['hit'])
     if b_filtered.has_key('hit'):
-            minimum = tax_dict["tax_id"].index("kingdom") #find the minimum index, i.e. the index for 'kingdom'
+            minimum = tax_dict["tax_id"].index("superkingdom") #find the minimum index, i.e. the index for 'superkingdom'
 	    for query in b_filtered['hit'].keys():
+		print "QUERY: %s" %b_filtered['hit'][query]
 	        if len(b_filtered['hit'][query]) == 1:
 	            if v:
 		            print "\ndirect assignment for %s -> %s" %(query, b_filtered['hit'][query][0])
@@ -758,7 +759,9 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 		            print "\nattempting LCA assignment for %s" %query
 	            for index in reversed(range(len(tax_dict["tax_id"]))):
 	                id_list = []
-			if tax_dict["tax_id"][index] == 'below_superkingdom': #if this level is reached (that means it cannot be assigned to a kingdom) in the taxonomy then we have tested all possible levels and have not found any convergencce
+			if index < minimum: #if this level is reached (that means it cannot be assigned to a superkingdom) in the taxonomy then we have tested all possible levels and have not found any convergencce
+
+#			if tax_dict["tax_id"][index] == 'below_superkingdom': #if this level is reached (that means it cannot be assigned to a kingdom) in the taxonomy then we have tested all possible levels and have not found any convergencce
 			    if v:
 				    print "was unable to assign LCA to %s" %query
 			    if not tax_count.has_key('nohit'):
@@ -768,7 +771,7 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 #	                print index
 #	                print "\nLEVEL: %s" %tax_dict["tax_id"][index]
 	                for tax in b_filtered['hit'][query]:
-#			    print tax
+			    print tax
 #	                    print tax_dict[tax][index]
 	                    id_list.append(tax_dict[tax][index])
 	                    if not tax_dict[tax][index]:
@@ -823,11 +826,10 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     	    if len(b_filtered['hit']) == 0:
 	        print "\nall queries have been successfully assigned to a taxonomy"
 	    else:
-                print "\nLCA detection failed for %i queries\n" %(len(b_filtered['hit']))
-                if v:
-                        for q in b_filtered['hit']:
-                                print q,b_filtered['hit'][q]
-
+	        print "\nLCA detection failed for %i queries\n" %(len(b_filtered['hit']))
+		if v:
+			for q in b_filtered['hit']:
+				print q,b_filtered['hit'][q]
 
     if b_filtered.has_key('nohit'):
         if not tax_count.has_key('nohit'):
@@ -1558,9 +1560,9 @@ def assign_taxonomy_pplacer(pplacer_out, tax_dict, v=0):
     from collections import defaultdict
   
       
-    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
-    tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
-    minimum = tax_dict["tax_id"].index("kingdom")
+    levels = ['superkingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
+    tax_count = {'superkingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
+    minimum = tax_dict["tax_id"].index("superkingdom")
   
     print "\nInterpreting pplacer results and adjust to standard taxonomic levels (%s)\n" %", ".join(levels)
  
@@ -1576,10 +1578,10 @@ def assign_taxonomy_pplacer(pplacer_out, tax_dict, v=0):
             #find the index of the initial assignment
             index = tax_dict["tax_id"].index(tax_dict[pplacer_out['hit'][query][0]][1])
 
-            #if already the initial assignemnt is above kingdom level
+            #if already the initial assignemnt is above superkingdom level
             if index < minimum:
                 if v:
-                    print "initial assignment above level kingdom for %s -> bin as 'nohit'" %query
+                    print "initial assignment above level superkingdom for %s -> bin as 'nohit'" %query
                 tax_count['nohit']['nohit'].append(query)
                 continue
 
