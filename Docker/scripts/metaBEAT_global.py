@@ -33,7 +33,7 @@ import shutil
 
 
 #############################################################################
-VERSION="0.97.10-global"
+VERSION="0.97.11-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -172,7 +172,7 @@ def add_taxonomy_to_biom(per_tax_level_clusters, per_tax_level_trees, biom_in, m
     	from biom.table import Table
 	
 	dictionary = {}
-	levels = ['nohit', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+	levels = ['nohit', 'superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
 	biom_out = biom_in.copy()
 	otu_order = []
 	trees = []
@@ -322,9 +322,9 @@ def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
     """
     from collections import defaultdict
 
-    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
-    tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
-    minimum = tax_dict["tax_id"].index("kingdom")
+    levels = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
+    tax_count = {'superkingdom':{}, 'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
+    minimum = tax_dict["tax_id"].index("superkingdom")
 
     print "\nInterpreting kraken results and adjust to standard taxonomic levels (%s)\n" %(", ".join(levels))
 
@@ -341,10 +341,10 @@ def assign_taxonomy_kraken(kraken_out, tax_dict, v=0):
             #find the index of the initial assignment
             index = tax_dict["tax_id"].index(tax_dict[kraken_out['hit'][query][0]][1])
 
-            #if already the initial assignemnt is above kingdom level
+            #if already the initial assignemnt is above superkingdom level
             if index < minimum:
                 if v:
-                    print "initial assignment above level kingdom for %s -> bin as 'nohit'" %query
+                    print "initial assignment above level superkingdom for %s -> bin as 'nohit'" %query
                 tax_count['nohit']['nohit'].append(query)
                 continue
 
@@ -407,8 +407,8 @@ def find_full_taxonomy(per_tax_level, taxonomy_dictionary):
         Extracts taxonomy strings consisting of definend taxonomic levels for taxids
         """
         
-        syn = {'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
-        levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+        syn = {'superkingdom': 'sk__', 'kingdom': 'k__', 'phylum': 'p__', 'class': 'c__', 'order': 'o__', 'family': 'f__', 'genus':'g__', 'species': 's__'}
+        levels = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
         level_indices = []
         tax_trees = {}
 
@@ -739,12 +739,13 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     "The function takes a dictionary of queries and their hits"
     "and provides taxonomic assignment based on the LCA method."
     tax_count = defaultdict(dict)
-    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
+    levels = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
 
 #    print len(b_filtered['hit'])
     if b_filtered.has_key('hit'):
-            minimum = tax_dict["tax_id"].index("kingdom") #find the minimum index, i.e. the index for 'kingdom'
+            minimum = tax_dict["tax_id"].index("superkingdom") #find the minimum index, i.e. the index for 'superkingdom'
 	    for query in b_filtered['hit'].keys():
+#		print "QUERY: %s" %b_filtered['hit'][query]
 	        if len(b_filtered['hit'][query]) == 1:
 	            if v:
 		            print "\ndirect assignment for %s -> %s" %(query, b_filtered['hit'][query][0])
@@ -758,7 +759,9 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 		            print "\nattempting LCA assignment for %s" %query
 	            for index in reversed(range(len(tax_dict["tax_id"]))):
 	                id_list = []
-			if tax_dict["tax_id"][index] == 'below_superkingdom': #if this level is reached (that means it cannot be assigned to a kingdom) in the taxonomy then we have tested all possible levels and have not found any convergencce
+			if index < minimum: #if this level is reached (that means it cannot be assigned to a superkingdom) in the taxonomy then we have tested all possible levels and have not found any convergencce
+
+#			if tax_dict["tax_id"][index] == 'below_superkingdom': #if this level is reached (that means it cannot be assigned to a kingdom) in the taxonomy then we have tested all possible levels and have not found any convergencce
 			    if v:
 				    print "was unable to assign LCA to %s" %query
 			    if not tax_count.has_key('nohit'):
@@ -768,6 +771,7 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 #	                print index
 #	                print "\nLEVEL: %s" %tax_dict["tax_id"][index]
 	                for tax in b_filtered['hit'][query]:
+#			    print tax
 #	                    print tax_dict[tax][index]
 	                    id_list.append(tax_dict[tax][index])
 	                    if not tax_dict[tax][index]:
@@ -822,7 +826,10 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     	    if len(b_filtered['hit']) == 0:
 	        print "\nall queries have been successfully assigned to a taxonomy"
 	    else:
-	        print "\nLCA detection failed for %i queries:\n%s" %(len(b_filtered['hit']), b_filtered['hit'])
+	        print "\nLCA detection failed for %i queries\n" %(len(b_filtered['hit']))
+		if v:
+			for q in b_filtered['hit']:
+				print q,b_filtered['hit'][q]
 
     if b_filtered.has_key('nohit'):
         if not tax_count.has_key('nohit'):
@@ -1125,7 +1132,15 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, b
                 if not result['format']: #determining the format of the blast database (only once per blast file)
                     if alignment.title.startswith('gi') or alignment.title.startswith('gb'):
                         result['format']='gb'
-			gb_index = alignment.title.split("|").index("gb")+1
+
+			found_index = False
+			for tag in ['gb','dbj']:
+				if tag in alignment.title.split("|"):
+					gb_index = alignment.title.split("|").index(tag)+1
+					found_index = True
+
+			if not found_index:
+				sys.exit("\nCan't recognize the header format in the BLAST database: %s\n" %alignment.title.split(" ")[0])
                     else:
                         result['format']='taxid'
 
@@ -1441,6 +1456,67 @@ def extract_taxid_list_from_result(dictionary):
 
     return out_list
 
+def check_taxids_complete(tid_list, tax_dict, results_dict, tax_db, gb_to_taxid_file=args.gb_to_taxid):
+	"""
+	The function takes a list of taxids and checks if all are in the taxonomy dictionary
+	previously when this happened the reason was that when taxtastic build the reduced taxonomy it used 
+	a differet taxid. So when I queried Genbank for the taxid of a given accession I got '12345' back
+	then taxtastic built the reduced taxonomy and used a different taxid for the same taxon, e.g. '23455'
+	might be due to very recent changes/updates with the taxids that I don't get when I query a particular Genbank record
+	to get the taxid. So when I find one of these cases I let taxtastic build a reduced taxonomy with just the odd
+	taxid. the last line if the file then starts with the new taxid for the same taxon that taxtastic uses. I find this and
+	update the results dictionary and the gb_to_taxid file accordingly.
+	"""
+	import shlex, subprocess
+	import os
+	
+	print "\ndouble-check that all taxids are in the taxonomy dictionary"
+	for taxID in tid_list:
+		if taxID in tax_dict:
+#			print "%s ok!" %taxID
+			pass
+		else:
+			print "%s is not there - I'll check what taxtastic says about this\n" %taxID
+			
+			cmd = "taxit taxtable -t %s -o taxa.csv %s" %(taxID,tax_db)
+    			print "\n"+cmd
+    			taxtable,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+    			if err:
+        			print "something went wrong while building the reduced taxonomy:"
+        			print err
+        			sys.exit()
+
+			with open('taxa.csv', 'r') as f:
+			    lines = f.read().splitlines()
+			    last_line = lines[-1].split(",")[0].replace('"','')
+			    print "found taxid: '%s'" %last_line
+			os.remove('taxa.csv')
+
+			print "Correcting the taxid in the taxid list for query matches",
+			for q in res_dict['hit']:
+				if taxID in results_dict['hit'][q]:
+					index = results_dict['hit'][q].index(taxID)
+					results_dict['hit'][q][index] = last_line
+#					print "corrected to: %s" %results_dict['hit'][q]		
+
+			print " .. done!"
+
+			print "Correcting the taxid in the gb_to_taxid file"
+			temp_gb_to_taxid_dict = {}
+
+			print "parsing '%s'" %gb_to_taxid_file,	#read the file in
+			rw_gb_to_taxid_dict(dictionary=temp_gb_to_taxid_dict, name=gb_to_taxid_file, mode='r')
+
+			#correct
+			for acc in temp_gb_to_taxid_dict:
+				if temp_gb_to_taxid_dict[acc] == taxID:
+					temp_gb_to_taxid_dict[acc] = last_line
+			
+			print "updating '%s'" %gb_to_taxid_file,
+			rw_gb_to_taxid_dict(dictionary=temp_gb_to_taxid_dict, name=gb_to_taxid_file, mode='w')
+
+
+
 def extract_queries_plus_rc(infile, good_list, bad_list, rc_list, out_prefix='pplacer'):
 	"""
 	Bins reads into two files according to lists containing the seqeuence ids.
@@ -1545,9 +1621,9 @@ def assign_taxonomy_pplacer(pplacer_out, tax_dict, v=0):
     from collections import defaultdict
   
       
-    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
-    tax_count = {'kingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
-    minimum = tax_dict["tax_id"].index("kingdom")
+    levels = ['superkingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] #taxonomic levels of interest
+    tax_count = {'superkingdom':{}, 'phylum':{}, 'class':{}, 'order':{}, 'family':{}, 'genus':{}, 'species':{}}
+    minimum = tax_dict["tax_id"].index("superkingdom")
   
     print "\nInterpreting pplacer results and adjust to standard taxonomic levels (%s)\n" %", ".join(levels)
  
@@ -1563,10 +1639,10 @@ def assign_taxonomy_pplacer(pplacer_out, tax_dict, v=0):
             #find the index of the initial assignment
             index = tax_dict["tax_id"].index(tax_dict[pplacer_out['hit'][query][0]][1])
 
-            #if already the initial assignemnt is above kingdom level
+            #if already the initial assignemnt is above superkingdom level
             if index < minimum:
                 if v:
-                    print "initial assignment above level kingdom for %s -> bin as 'nohit'" %query
+                    print "initial assignment above level superkingdom for %s -> bin as 'nohit'" %query
                 tax_count['nohit']['nohit'].append(query)
                 continue
 
@@ -2615,6 +2691,9 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 			taxid_list = extract_taxid_list_from_result(res_dict['hit'])
 
                 	make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+
+			#check if all taxids are there
+			check_taxids_complete(tid_list=taxid_list, tax_dict=tax_dict, results_dict=res_dict, tax_db=taxonomy_db)
 
 			print "\nassign taxonomy\n"
 			taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)

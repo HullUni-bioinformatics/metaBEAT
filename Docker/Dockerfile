@@ -33,6 +33,11 @@ cd jellyfish-1.1.11/ && \
 ./configure --prefix=$(pwd) && make && make install
 ENV PATH /src/jellyfish-1.1.11/bin:$PATH
 
+#create taxonomy database and put in expected place
+RUN taxit new_database ./taxonomy.db && \
+rm ./taxdmp.zip && \
+mv ./taxonomy.db /usr/bin/
+
 #Add binaries
 ADD external_software/pplacer \
 external_software/guppy \
@@ -54,11 +59,6 @@ scripts/metaBEAT_global.py \
 scripts/jplace_to_biom.py /usr/bin/
 #add the functions to a PYTHONPATH location
 ADD scripts/metaBEAT_global_misc_functions.py /home/reprophylo/
-
-#create taxonomy database and put in expected place
-RUN taxit new_database ./taxonomy.db && \
-rm ./taxdmp.zip && \
-mv ./taxonomy.db /usr/bin/
 
 RUN mkdir /home/working
 
