@@ -745,7 +745,7 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     if b_filtered.has_key('hit'):
             minimum = tax_dict["tax_id"].index("superkingdom") #find the minimum index, i.e. the index for 'superkingdom'
 	    for query in b_filtered['hit'].keys():
-		print "QUERY: %s" %b_filtered['hit'][query]
+#		print "QUERY: %s" %b_filtered['hit'][query]
 	        if len(b_filtered['hit'][query]) == 1:
 	            if v:
 		            print "\ndirect assignment for %s -> %s" %(query, b_filtered['hit'][query][0])
@@ -771,7 +771,7 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 #	                print index
 #	                print "\nLEVEL: %s" %tax_dict["tax_id"][index]
 	                for tax in b_filtered['hit'][query]:
-			    print tax
+#			    print tax
 #	                    print tax_dict[tax][index]
 	                    id_list.append(tax_dict[tax][index])
 	                    if not tax_dict[tax][index]:
@@ -1455,6 +1455,67 @@ def extract_taxid_list_from_result(dictionary):
 	out_list.extend(val)
 
     return out_list
+
+def check_taxids_complete(tid_list, tax_dict, results_dict, tax_db, gb_to_taxid_file=args.gb_to_taxid):
+	"""
+	The function takes a list of taxids and checks if all are in the taxonomy dictionary
+	previously when this happened the reason was that when taxtastic build the reduced taxonomy it used 
+	a differet taxid. So when I queried Genbank for the taxid of a given accession I got '12345' back
+	then taxtastic built the reduced taxonomy and used a different taxid for the same taxon, e.g. '23455'
+	might be due to very recent changes/updates with the taxids that I don't get when I query a particular Genbank record
+	to get the taxid. So when I find one of these cases I let taxtastic build a reduced taxonomy with just the odd
+	taxid. the last line if the file then starts with the new taxid for the same taxon that taxtastic uses. I find this and
+	update the results dictionary and the gb_to_taxid file accordingly.
+	"""
+	import shlex, subprocess
+	import os
+	
+	print "\ndouble-check that all taxids are in the taxonomy dictionary"
+	for taxID in tid_list:
+		if taxID in tax_dict:
+#			print "%s ok!" %taxID
+			pass
+		else:
+			print "%s is not there - I'll check what taxtastic says about this\n" %taxID
+			
+			cmd = "taxit taxtable -t %s -o taxa.csv %s" %(taxID,tax_db)
+    			print "\n"+cmd
+    			taxtable,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+    			if err:
+        			print "something went wrong while building the reduced taxonomy:"
+        			print err
+        			sys.exit()
+
+			with open('taxa.csv', 'r') as f:
+			    lines = f.read().splitlines()
+			    last_line = lines[-1].split(",")[0].replace('"','')
+			    print "found taxid: '%s'" %last_line
+			os.remove('taxa.csv')
+
+			print "Correcting the taxid in the taxid list for query matches",
+			for q in res_dict['hit']:
+				if taxID in results_dict['hit'][q]:
+					index = results_dict['hit'][q].index(taxID)
+					results_dict['hit'][q][index] = last_line
+#					print "corrected to: %s" %results_dict['hit'][q]		
+
+			print " .. done!"
+
+			print "Correcting the taxid in the gb_to_taxid file"
+			temp_gb_to_taxid_dict = {}
+
+			print "parsing '%s'" %gb_to_taxid_file,	#read the file in
+			rw_gb_to_taxid_dict(dictionary=temp_gb_to_taxid_dict, name=gb_to_taxid_file, mode='r')
+
+			#correct
+			for acc in temp_gb_to_taxid_dict:
+				if temp_gb_to_taxid_dict[acc] == taxID:
+					temp_gb_to_taxid_dict[acc] = last_line
+			
+			print "updating '%s'" %gb_to_taxid_file,
+			rw_gb_to_taxid_dict(dictionary=temp_gb_to_taxid_dict, name=gb_to_taxid_file, mode='w')
+
+
 
 def extract_queries_plus_rc(infile, good_list, bad_list, rc_list, out_prefix='pplacer'):
 	"""
@@ -2630,6 +2691,9 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 			taxid_list = extract_taxid_list_from_result(res_dict['hit'])
 
                 	make_tax_dict(tids=taxid_list, out_tax_dict=tax_dict, denovo_taxa=denovo_taxa, ref_taxa=reference_taxa)
+
+			#check if all taxids are there
+			check_taxids_complete(tid_list=taxid_list, tax_dict=tax_dict, results_dict=res_dict, tax_db=taxonomy_db)
 
 			print "\nassign taxonomy\n"
 			taxonomy_count = assign_taxonomy_LCA(b_filtered=res_dict, tax_dict=tax_dict, v=args.verbose)
