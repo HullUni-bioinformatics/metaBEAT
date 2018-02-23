@@ -8,7 +8,7 @@ RUN apt-get update -y --fix-missing && \
 apt-get install -y openjdk-7-jre-headless wget ncbi-blast+ unzip
 #RUN apt-get upgrade -y
 
-RUN pip install biom-format==2.1.4
+RUN pip install biom-format==2.1.4 biopython==1.70
 
 RUN mkdir /src
 WORKDIR /src
