@@ -768,6 +768,7 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
 #	                print index
 #	                print "\nLEVEL: %s" %tax_dict["tax_id"][index]
 	                for tax in b_filtered['hit'][query]:
+#			    print tax
 #	                    print tax_dict[tax][index]
 	                    id_list.append(tax_dict[tax][index])
 	                    if not tax_dict[tax][index]:
@@ -822,7 +823,11 @@ def assign_taxonomy_LCA(b_filtered, tax_dict, v=0):
     	    if len(b_filtered['hit']) == 0:
 	        print "\nall queries have been successfully assigned to a taxonomy"
 	    else:
-	        print "\nLCA detection failed for %i queries:\n%s" %(len(b_filtered['hit']), b_filtered['hit'])
+                print "\nLCA detection failed for %i queries\n" %(len(b_filtered['hit']))
+                if v:
+                        for q in b_filtered['hit']:
+                                print q,b_filtered['hit'][q]
+
 
     if b_filtered.has_key('nohit'):
         if not tax_count.has_key('nohit'):
@@ -1125,7 +1130,15 @@ def blast_filter(b_result, v=0, m_bitscore=80, m_ident=0.8, m_ali_length=0.95, b
                 if not result['format']: #determining the format of the blast database (only once per blast file)
                     if alignment.title.startswith('gi') or alignment.title.startswith('gb'):
                         result['format']='gb'
-			gb_index = alignment.title.split("|").index("gb")+1
+
+			found_index = False
+			for tag in ['gb','dbj']:
+				if tag in alignment.title.split("|"):
+					gb_index = alignment.title.split("|").index(tag)+1
+					found_index = True
+
+			if not found_index:
+				sys.exit("\nCan't recognize the header format in the BLAST database: %s\n" %alignment.title.split(" ")[0])
                     else:
                         result['format']='taxid'
 
