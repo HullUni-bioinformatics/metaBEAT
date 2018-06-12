@@ -45,7 +45,7 @@ def find_target_OTUs_by_taxonomy(BIOM, target, level='all'):
     from biom.table import Table
     
     return_OTUs = {}
-    levels = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+    levels = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
     levels_valid = ['all','unassigned']
     levels_valid.extend(levels)
     search_levels = []
