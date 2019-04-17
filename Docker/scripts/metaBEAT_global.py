@@ -33,7 +33,7 @@ import shutil
 
 
 #############################################################################
-VERSION="0.97.12-global"
+VERSION="0.97.13-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -130,6 +130,7 @@ phyloplace_group.add_argument("--jplace", help="phylogenetic placement result fr
 kraken_group = parser.add_argument_group('Kraken', 'The parameters in this group affect taxonomic assignment using Kraken')
 kraken_group.add_argument("--jellyfish_hash_size", help="jellyfish hash size to control memory usage during kraken database building. A table size of '6400M' will require ~44G of RAM. '2700M' -> 20G RAM. ", type=str, default=False, metavar="<STR>", action="store")
 kraken_group.add_argument("--kraken_db", help="PATH to a Kraken database", metavar="<DIR>", action="store")
+kraken_group.add_argument("--kraken_out", help="PATH to a Kraken output from previous run", metavar="<DIR>", action="store")
 kraken_group.add_argument("--kraken_score_threshold", help="minimum proportion of k-mers to support assignment (0-1; default: 0)", metavar="<FLOAT>", default=0, type=float, action="store")
 kraken_group.add_argument("--rm_kraken_db", help="Remove Kraken database after successful completion", action="store_true")
 
@@ -240,8 +241,11 @@ def collapse_biom_by_taxonomy(in_table):
 
     	from biom.table import Table
 
-	bin_f = lambda id_, x: x['taxonomy'][-1].split("__")[1]
+#	bin_f = lambda id_, x: x['taxonomy'][-1].split("__")[1]
+	bin_f = lambda id_, x: x['taxonomy'][-1]
+
 	biom_out_collapsed = in_table.collapse(bin_f, norm=False, min_group_size=1, axis='observation')
+
 #	for taxon in biom_out_collapsed.ids(axis='observation'):
 		
 #	print biom_out_collapsed.to_tsv(header_key='taxonomy', header_value='taxomomy')
@@ -252,6 +256,7 @@ def collapse_biom_by_taxonomy(in_table):
 #	print in_table.metadata(axis='observation')
 	for otu in in_table.ids(axis='observation'):
 #		print otu
+#		print "|".join(in_table.metadata(otu, axis='observation')['taxonomy'])
 		if not "|".join(in_table.metadata(otu, axis='observation')['taxonomy']) in trees:
 			trees.append("|".join(in_table.metadata(otu, axis='observation')['taxonomy']))
 
@@ -259,8 +264,11 @@ def collapse_biom_by_taxonomy(in_table):
 	collapsed_order = []
 	collapsed_meta = {}
 	for t in trees:
-		collapsed_order.append(t.split("|")[-1].split("__")[-1])
-		collapsed_meta[t.split("|")[-1].split("__")[-1]] = {'taxonomy': t.split("|")}
+#		print t
+		observation = t.split("|")[-1]
+		collapsed_meta[observation] = {'taxonomy': t.split("|")}
+		collapsed_order.append(observation)
+        
 	biom_out_collapsed.add_metadata(md=collapsed_meta, axis='observation')
 	biom_out_collapsed_sorted = biom_out_collapsed.sort_order(collapsed_order, axis='observation')
 #	print biom_out_collapsed_sorted.to_tsv(header_key='taxonomy', header_value='taxomomy')
@@ -272,7 +280,7 @@ def pa_and_collapse_by_taxonomy(in_table):
 
     	from biom.table import Table
 	
-	bin_f = lambda id_, x: x['taxonomy'][-1].split("__")[1]
+	bin_f = lambda id_, x: x['taxonomy'][-1]
 
 #	print "\n### sorted presence-absence OTU table with taxonomy ###\n"
 	pa_sorted_biom = in_table.pa(inplace=False)	
@@ -289,8 +297,8 @@ def pa_and_collapse_by_taxonomy(in_table):
 	collapsed_order = []
 	collapsed_meta = {}
 	for t in trees:
-		collapsed_order.append(t.split("|")[-1].split("__")[-1])
-		collapsed_meta[t.split("|")[-1].split("__")[-1]] = {'taxonomy': t.split("|")}
+		collapsed_order.append(t.split("|")[-1])
+		collapsed_meta[t.split("|")[-1]] = {'taxonomy': t.split("|")}
 
 	pa_sorted_biom_collapsed.add_metadata(md=collapsed_meta, axis='observation')
 	pa_sorted_biom_collapsed = pa_sorted_biom_collapsed.sort_order(collapsed_order, axis='observation')
@@ -411,13 +419,18 @@ def find_full_taxonomy(per_tax_level, taxonomy_dictionary):
         levels = ['superkingdom', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
         level_indices = []
         tax_trees = {}
-
+         
         for level in levels:
             tax_trees[level] = {}
+            ok=0
             for i in range(len(taxonomy_dictionary['tax_id'])):
                 if level == taxonomy_dictionary['tax_id'][i]:
                     level_indices.append(i)
-
+                    ok=1
+            if not ok:
+                level_indices.append("missing")
+                
+      
         for level in reversed(levels):
             if level in per_tax_level:
                 
@@ -425,12 +438,16 @@ def find_full_taxonomy(per_tax_level, taxonomy_dictionary):
 #                    print "\n\ttaxid: %s" %tid
                     ind_taxonomy = []
                     for i in range(len(level_indices)):#range(len(levels)):
-#                        print "seeking level %s at index: %s" %(taxonomy_dictionary['tax_id'][level_indices[i]], level_indices[i])
-                        if taxonomy_dictionary[tid][level_indices[i]]:
-                            ind_taxonomy.append('%s%s' %(syn[levels[i]],taxonomy_dictionary[taxonomy_dictionary[tid][level_indices[i]]][2].replace(' ','_')))
+                        if type(level_indices[i]) is int:
+#                            print "seeking level %s at index: %s" %(taxonomy_dictionary['tax_id'][level_indices[i]], level_indices[i])
+                            if taxonomy_dictionary[tid][level_indices[i]]:
+                                ind_taxonomy.append('%s%s' %(syn[levels[i]],taxonomy_dictionary[taxonomy_dictionary[tid][level_indices[i]]][2].replace(' ','_')))
+                            else:
+                                ind_taxonomy.append('%sunknown' %syn[levels[i]])
                         else:
                             ind_taxonomy.append('%sunknown' %syn[levels[i]])
 
+#                    print ind_taxonomy
                     for j in reversed(range(len(levels))):
                         if '_unknown' in ind_taxonomy[j]:
                             del ind_taxonomy[j]
@@ -857,12 +874,7 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
     write_taxids(tids)
 
     #find taxit version
-#    stdout,stderr = subprocess.Popen(shlex.split("taxit -V"), stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-#    print stdout
-#    cmd = shlex.split("taxit -V")
-#    taxit_version,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
     taxit_version = subprocess.check_output(shlex.split("taxit -V"), stderr=subprocess.STDOUT)
-#    print taxit_version
 
     #run taxit
     print "running taxit (%s) to generate reduced taxonomy table" %taxit_version.strip()
@@ -1001,9 +1013,11 @@ def gb_to_taxid(b_filtered, all_taxids, processed, gb_to_taxid_file=args.gb_to_t
 			print stderr
 		    else:
 			for acc in stdout.strip().split("\n"):
-				processed[acc.split(",")[0]] = acc.split(",")[1]
-				taxids.append(acc.split(",")[1])
-				new += 1
+				if acc.split(",")[0] == hit: #sometimes the blast database has several accessions listed for a given hit (as far as I understand these have identical sequences) which will be returned by blastdbcmd - so we only retain the actual hit
+					processed[acc.split(",")[0]] = acc.split(",")[1]
+					taxids.append(acc.split(",")[1])
+					new += 1
+					break
 			if v:
 				print " .. success!"
 
@@ -1756,6 +1770,9 @@ else:
 
 if args.kraken_db:
 	args.kraken_db = os.path.abspath(args.kraken_db)
+
+if args.kraken_out:
+	args.kraken_out = os.path.abspath(args.kraken_out)
 
 #if args.blast or args.blast_xml or args.pplace:
 if args.blast or args.kraken or args.pplace:
@@ -2814,17 +2831,23 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 				os.makedirs('KRAKEN')
 			os.chdir('KRAKEN')
 			
-			if not args.kraken_db:
-				# Format Sequences for input to kraken database build
-				gb_to_kraken_db(all_seqs, args.marker)
-				#Build database
-				full_build_custom_kraken_db(args.marker+'.kraken.fasta', db_path='.', db_name='KRAKEN_DB', threads=args.n_threads, jellyfish_hash_size=args.jellyfish_hash_size, v=args.verbose)
-				args.kraken_db = os.path.abspath('./KRAKEN_DB')
-				print "\nSuccessuflly generated at: %s\n" %args.kraken_db
+			if args.kraken_out:
+				print "\nusing existing KRAKEN result from '%s'\n" %args.kraken_out
+				kraken_out_file = args.kraken_out
 			else:
-				print "\nUsing precompiled kraken database: %s\n" %args.kraken_db
+				if not args.kraken_db:
+					# Format Sequences for input to kraken database build
+					gb_to_kraken_db(all_seqs, args.marker)
+					#Build database
+					full_build_custom_kraken_db(args.marker+'.kraken.fasta', db_path='.', db_name='KRAKEN_DB', threads=args.n_threads, jellyfish_hash_size=args.jellyfish_hash_size, v=args.verbose)
+					args.kraken_db = os.path.abspath('./KRAKEN_DB')
+					print "\nSuccessuflly generated at: %s\n" %args.kraken_db
+				else:
+					print "\nUsing precompiled kraken database: %s\n" %args.kraken_db
+				
+				kraken_out_file = run_kraken(kraken_db=args.kraken_db, queries_fasta=global_centroids, threads=args.n_threads)
 
-			kraken_out_file = run_kraken(kraken_db=args.kraken_db, queries_fasta=global_centroids, threads=args.n_threads)
+
 			kraken_out_file = kraken_filter(kraken_db=args.kraken_db, kraken_out=kraken_out_file, score_threshold=args.kraken_score_threshold)
 
 			kraken_out_dict = parse_kraken_out(kraken_out=kraken_out_file)
