@@ -14,10 +14,16 @@ RUN mkdir /src
 WORKDIR /src
 
 #set up taxtastic v0.8.5
+#pip install taxtastic
+
 RUN git clone https://github.com/fhcrc/taxtastic.git && \
-pip install -U pip && \
+cd taxtastic && \
+git reset --soft 4e874b7f2cc146178828bfba386314f8c342722b && \
+cd ../ && \
+pip install -U pip==18.0 && \
 ./taxtastic/dev/install_pysqlite.sh
-RUN pip install taxtastic==0.8.5 && \
+RUN pip install psycopg2==2.7.3.1 && \
+pip install taxtastic==0.8.9 && \
 rm -rf pysqlite-2.8.3 pysqlite-2.8.3.tar.gz taxtastic
 
 #kraken
@@ -53,8 +59,9 @@ external_software/fastx_clipper \
 external_software/fastx_reverse_complement \
 external_software/process_shortreads \
 external_software/fastq_quality_trimmer \
-external_software/fastq_quality_filter \
-scripts/fetch_from_db.py \
+external_software/fastq_quality_filter /usr/bin/
+#add metaBEAT scripts to image
+ADD scripts/fetch_from_db.py \
 scripts/metaBEAT_global.py \
 scripts/jplace_to_biom.py /usr/bin/
 #add the functions to a PYTHONPATH location

@@ -33,7 +33,7 @@ import shutil
 
 
 #############################################################################
-VERSION="0.97.11-global"
+VERSION="0.97.12-global"
 DESCRIPTION="metaBEAT - metaBarcoding and Environmental DNA Analyses tool\nversion: v."+VERSION
 informats = {'gb': 'gb', 'genbank': 'gb', 'fasta': 'fasta', 'fa': 'fasta', 'fastq': 'fastq', 'uc':'uc'}
 methods = []	#this list will contain the list of methods to be applied to the queries
@@ -856,8 +856,17 @@ def make_tax_dict(tids, out_tax_dict, denovo_taxa, ref_taxa):
 
     write_taxids(tids)
 
+    #find taxit version
+#    stdout,stderr = subprocess.Popen(shlex.split("taxit -V"), stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+#    print stdout
+#    cmd = shlex.split("taxit -V")
+#    taxit_version,err = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+    taxit_version = subprocess.check_output(shlex.split("taxit -V"), stderr=subprocess.STDOUT)
+#    print taxit_version
+
+    #run taxit
+    print "running taxit (%s) to generate reduced taxonomy table" %taxit_version.strip()
     cmd = "taxit taxtable -f taxids.txt -o taxa.csv %s" %taxonomy_db
-    print "running taxit (v0.8.5) to generate reduced taxonomy table"
     if len(denovo_taxa) > 0:
         print "WARNING: any taxa without valid taxid will not be included -  NEEDS TO BE FIXED IF PHYLOGENETIC PLACEMENT IS PLANNED"
     print "\n"+cmd
@@ -945,13 +954,20 @@ def check_for_taxonomy_db(tax_db):
 
     return tax_db
 
-def gb_to_taxid(b_filtered, all_taxids, processed, gb_to_taxid_file=args.gb_to_taxid, v=0):
+def gb_to_taxid(b_filtered, all_taxids, processed, gb_to_taxid_file=args.gb_to_taxid, db=None, v=0):
     "This function takes the resulting dictionary from the blast_filter function"
     "and fetches the corresponding taxonomic ids to the gb accessions if necessary"
     "(i.e. if the format is specified as 'gb')."
     "It returns a list of unique taxonomic ids."
+
+    import shlex, subprocess
+
     if b_filtered['format'] == 'gb':
 	total = 0
+	if not db:
+		print "Your BLAST results look like you've used a precompiled reference database - in order to complete taxonomic assignment, we need to query the database for the taxonomic ids of the hits you got - please specify the database via the '--blast_db' option\n"
+		sys.exit()
+
         for query in b_filtered['hit'].keys():
 	    new = 0
 	    old = 0
@@ -961,7 +977,8 @@ def gb_to_taxid(b_filtered, all_taxids, processed, gb_to_taxid_file=args.gb_to_t
             for hit in b_filtered['hit'][query]:
 #                print "gi: %s" %hit
                 if processed.has_key(hit):
-                    taxid = processed[hit]
+#                    taxid = processed[hit]
+		    taxids.append(processed[hit])
                     old += 1
                     if v:
                         print "have seen gb accession '%s' before" %(hit)
@@ -970,23 +987,43 @@ def gb_to_taxid(b_filtered, all_taxids, processed, gb_to_taxid_file=args.gb_to_t
                     if v:
                         print "querying Genbank to fetch taxid for gb accession '%s'" %(hit),
 		    done = False
-	            while not done:
-			try:
-				handle = Entrez.efetch(db="nucleotide", id=hit, rettype="fasta", retmode="xml")
-				done = True
-			except:
-				print "connection closed - retrying entrez for query '%s'.." %hit
+		    
+#		    print "BLAST DB: %s" %db
+#		    hit = 'JQ011172.1'
+		    cmd = 'blastdbcmd -db %s -entry %s -outfmt "%%a,%%T"' %(db, hit)
+#		    print cmd
+		    cmdlist = shlex.split(cmd)
+		    proc = subprocess.Popen(cmdlist, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		    stdout, stderr = proc.communicate()
+		    exitcode = proc.returncode #exitcode is '0' if process finished without error
+		    if exitcode:
+			print " .. an error occurred:"
+			print stderr
+		    else:
+			for acc in stdout.strip().split("\n"):
+				processed[acc.split(",")[0]] = acc.split(",")[1]
+				taxids.append(acc.split(",")[1])
+				new += 1
+			if v:
+				print " .. success!"
 
-                    taxon = Entrez.read(handle)
-                    taxid = taxon[0]['TSeq_taxid']
-                    processed[hit] = taxon[0]['TSeq_taxid']
-                    time.sleep(0.25)
-                    new += 1
-		    if v:
-			print " .. success!"
+#	            while not done:
+#			try:
+#				handle = Entrez.efetch(db="nucleotide", id=hit, rettype="fasta", retmode="xml")
+#				done = True
+#			except:
+#				print "connection closed - retrying entrez for query '%s'.." %hit
+
+#                    taxon = Entrez.read(handle)
+#                    taxid = taxon[0]['TSeq_taxid']
+#                    processed[hit] = taxon[0]['TSeq_taxid']
+#                    time.sleep(0.25)
+#                    new += 1
+#		    if v:
+#			print " .. success!"
                         
 #                print "taxid: %s" %taxid                
-                taxids.append(taxid)
+#                taxids.append(taxid)
 		total += 1
                 if not v:
                     if total%100 == 0:
@@ -2676,7 +2713,7 @@ if args.blast or args.blast_xml or args.pplace or args.kraken:
 			if res_dict['format'] == 'gb':	#This is the case if BLAST was performed against Genbank
 				print '\n'+time.strftime("%c")+'\n'
 				print "\nfetch taxids for gb accessions\n"
-				taxid_list = gb_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gb_to_taxid_dict, v=args.verbose)
+				taxid_list = gb_to_taxid(b_filtered=res_dict, all_taxids=taxid_list, processed=gb_to_taxid_dict, db=args.blast_db, v=args.verbose)
 
 			elif res_dict['format'] == 'unknown': #blast_filter function did not assign a format because no good hit was found to actually assess the format
 				if not tax_dict.has_key('tax_id'): #in this rare case I check if the tax_dict is in the proper format and if not
